@@ -8,7 +8,7 @@ import time
 import operator
 import functools
 
-import OCC.AIS
+import OCC.Core.AIS
 
 from collections import defaultdict, Iterable, OrderedDict
 
@@ -29,21 +29,21 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from .code_editor_pane import code_edit
 
 try:
-    from OCC.Display.pyqt5Display import qtViewer3d
+    from OCC.Core.Display.pyqt5Display import qtViewer3d
 except BaseException:
-    import OCC.Display
+    import OCC.Core.Display
 
     try:
-        import OCC.Display.backend
+        import OCC.Core.Display.backend
     except BaseException:
         pass
 
     try:
-        OCC.Display.backend.get_backend("qt-pyqt5")
+        OCC.Core.Display.backend.get_backend("qt-pyqt5")
     except BaseException:
-        OCC.Display.backend.load_backend("qt-pyqt5")
+        OCC.Core.Display.backend.load_backend("qt-pyqt5")
 
-    from OCC.Display.qtDisplay import qtViewer3d
+    from OCC.Core.Display.qtDisplay import qtViewer3d
 
 from .main import settings, iterator
 from .occ_utils import display_shape
@@ -117,7 +117,7 @@ if selection:
 
 
 class application(QtWidgets.QApplication):
-    """A pythonOCC, PyQt based IfcOpenShell application
+    """A pythonOCC.Core. PyQt based IfcOpenShell application
     with two tree views and a graphical 3d view"""
 
     class abstract_treeview(QtWidgets.QTreeWidget):
@@ -369,19 +369,19 @@ class application(QtWidgets.QApplication):
                 if hasattr(ais, 'Shape'):
                     yield ais.Shape()
                     return
-                shp = OCC.AIS.Handle_AIS_Shape.DownCast(ais_handle)
+                shp = OCC.Core.AIS.Handle_AIS_Shape.DownCast(ais_handle)
                 if not shp.IsNull():
                     yield shp.Shape()
                 return
                 mult = ais_handle
                 if mult.IsNull():
-                    shp = OCC.AIS.Handle_AIS_Shape.DownCast(ais_handle)
+                    shp = OCC.Core.AIS.Handle_AIS_Shape.DownCast(ais_handle)
                     if not shp.IsNull():
                         yield shp
                 else:
                     li = mult.GetObject().ConnectedTo()
                     for i in range(li.Length()):
-                        shp = OCC.AIS.Handle_AIS_Shape.DownCast(li.Value(i + 1))
+                        shp = OCC.Core.AIS.Handle_AIS_Shape.DownCast(li.Value(i + 1))
                         if not shp.IsNull():
                             yield shp
 

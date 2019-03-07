@@ -46,11 +46,11 @@ DEFAULT_STYLES = {
 
 
 def initialize_display():
-    import OCC.V3d
-    import OCC.Display.SimpleGui
+    import OCC.Core.V3d
+    import OCC.Core.Display.SimpleGui
 
     global handle, main_loop, add_menu, add_function_to_menu
-    handle, main_loop, add_menu, add_function_to_menu = OCC.Display.SimpleGui.init_display()
+    handle, main_loop, add_menu, add_function_to_menu = OCC.Core.Display.SimpleGui.init_display()
 
     def setup():
         viewer_handle = handle.GetViewer()
@@ -71,7 +71,7 @@ def initialize_display():
             viewer.DelLight(l)
 
         for dir in [(3, 2, 1), (-1, -2, -3)]:
-            light = OCC.V3d.V3d_DirectionalLight(viewer_handle)
+            light = OCC.Core.V3d.V3d_DirectionalLight(viewer_handle)
             light.SetDirection(*dir)
             viewer.SetLightOn(light.GetHandle())
 
@@ -80,18 +80,18 @@ def initialize_display():
 
 
 def yield_subshapes(shape):
-    import OCC.TopoDS
+    import OCC.Core.TopoDS
 
-    it = OCC.TopoDS.TopoDS_Iterator(shape)
+    it = OCC.Core.TopoDS.TopoDS_Iterator(shape)
     while it.More():
         yield it.Value()
         it.Next()
 
 
 def display_shape(shape, clr=None, viewer_handle=None):
-    import OCC.gp
-    import OCC.AIS
-    import OCC.Quantity
+    import OCC.Core.gp
+    import OCC.Core.AIS
+    import OCC.Core.Quantity
 
     if viewer_handle is None:
         viewer_handle = handle
@@ -101,7 +101,7 @@ def display_shape(shape, clr=None, viewer_handle=None):
     else:
         representation = None
 
-    material = OCC.Graphic3d.Graphic3d_MaterialAspect(OCC.Graphic3d.Graphic3d_NOM_PLASTER)
+    material = OCC.Core.Graphic3d.Graphic3d_MaterialAspect(OCC.Graphic3d.Graphic3d_NOM_PLASTER)
     material.SetDiffuse(1)
 
     if representation and not clr:
@@ -111,20 +111,20 @@ def display_shape(shape, clr=None, viewer_handle=None):
                 clr = DEFAULT_STYLES.get(representation.data.type, DEFAULT_STYLES["DEFAULT"])
 
     if clr:
-        ais = OCC.AIS.AIS_Shape(shape)
+        ais = OCC.Core.AIS.AIS_Shape(shape)
         ais.SetMaterial(material)
 
         if isinstance(clr, str):
-            qclr = getattr(OCC.Quantity, "Quantity_NOC_%s" % clr.upper(),
-                           getattr(OCC.Quantity, "Quantity_NOC_%s1" % clr.upper(), None))
+            qclr = getattr(OCC.Core.Quantity, "Quantity_NOC_%s" % clr.upper(),
+                           getattr(OCC.Core.Quantity, "Quantity_NOC_%s1" % clr.upper(), None))
             if qclr is None:
                 raise Exception("No color named '%s'" % clr.upper())
         elif isinstance(clr, Iterable):
             clr = tuple(clr)
             if len(clr) < 3 and len(clr) > 4:
                 raise Exception("Need 3 or 4 colour components. Got '%r'." % clr)
-            qclr = OCC.Quantity.Quantity_Color(clr[0], clr[1], clr[2], OCC.Quantity.Quantity_TOC_RGB)
-        elif isinstance(clr, OCC.Quantity.Quantity_Color):
+            qclr = OCC.Core.Quantity.Quantity_Color(clr[0], clr[1], clr[2], OCC.Quantity.Quantity_TOC_RGB)
+        elif isinstance(clr, OCC.Core.Quantity.Quantity_Color):
             qclr = clr
         else:
             raise Exception("Object of type %r cannot be used as a color." % type(clr))
@@ -133,10 +133,10 @@ def display_shape(shape, clr=None, viewer_handle=None):
         if isinstance(clr, tuple) and len(clr) == 4 and clr[3] < 1.:
             ais.SetTransparency(1. - clr[3])
 
-    elif representation and hasattr(OCC.AIS, "AIS_MultipleConnectedShape"):
+    elif representation and hasattr(OCC.Core.AIS, "AIS_MultipleConnectedShape"):
         default_style_applied = None
 
-        ais = OCC.AIS.AIS_MultipleConnectedShape(shape)
+        ais = OCC.Core.AIS.AIS_MultipleConnectedShape(shape)
 
         subshapes = list(yield_subshapes(shape))
         lens = len(representation.styles), len(subshapes)
@@ -145,11 +145,11 @@ def display_shape(shape, clr=None, viewer_handle=None):
             warnings.warn("Unable to assign styles to subshapes. Encountered %d styles for %d shapes." % lens)
         else:
             for shp, stl in zip(subshapes, representation.styles):
-                subshape = OCC.AIS.AIS_Shape(shp)
+                subshape = OCC.Core.AIS.AIS_Shape(shp)
                 if min(stl) < 0. or max(stl) > 1.:
                     default_style_applied = stl = DEFAULT_STYLES.get(representation.data.type,
                                                                      DEFAULT_STYLES["DEFAULT"])
-                subshape.SetColor(OCC.Quantity.Quantity_Color(stl[0], stl[1], stl[2], OCC.Quantity.Quantity_TOC_RGB))
+                subshape.SetColor(OCC.Core.Quantity.Quantity_Color(stl[0], stl[1], stl[2], OCC.Quantity.Quantity_TOC_RGB))
                 subshape.SetMaterial(material)
                 if len(stl) == 4 and stl[3] < 1.:
                     subshape.SetTransparency(1. - stl[3])
@@ -170,13 +170,13 @@ def display_shape(shape, clr=None, viewer_handle=None):
                 ais.SetTransparency(1.)
 
     else:
-        ais = OCC.AIS.AIS_Shape(shape)
+        ais = OCC.Core.AIS.AIS_Shape(shape)
         ais.SetMaterial(material)
 
         def r():
             return random.random() * 0.3 + 0.7
 
-        clr = OCC.Quantity.Quantity_Color(r(), r(), r(), OCC.Quantity.Quantity_TOC_RGB)
+        clr = OCC.Core.Quantity.Quantity_Color(r(), r(), r(), OCC.Quantity.Quantity_TOC_RGB)
         ais.SetColor(clr)
 
     ais_handle = ais.GetHandle()
@@ -190,24 +190,24 @@ def set_shape_transparency(ais, t):
 
 
 def get_bounding_box_center(bbox):
-    import OCC.gp
+    import OCC.Core.gp
 
     bbmin = [0.] * 3
     bbmax = [0.] * 3
     bbmin[0], bbmin[1], bbmin[2], bbmax[0], bbmax[1], bbmax[2] = bbox.Get()
-    return OCC.gp.gp_Pnt(*map(lambda xy: (xy[0] + xy[1]) / 2., zip(bbmin, bbmax)))
+    return OCC.Core.gp.gp_Pnt(*map(lambda xy: (xy[0] + xy[1]) / 2., zip(bbmin, bbmax)))
 
 
 def serialize_shape(shape):
-    import OCC.BRepTools
+    import OCC.Core.BRepTools
 
-    shapes = OCC.BRepTools.BRepTools_ShapeSet()
+    shapes = OCC.Core.BRepTools.BRepTools_ShapeSet()
     shapes.Add(shape)
     return shapes.WriteToString()
 
 
 def create_shape_from_serialization(brep_object):
-    import OCC.BRepTools
+    import OCC.Core.BRepTools
 
     brep_data, occ_shape, styles = None, None, ()
 
@@ -229,7 +229,7 @@ def create_shape_from_serialization(brep_object):
         return shape_tuple(brep_object, None, styles)
 
     try:
-        ss = OCC.BRepTools.BRepTools_ShapeSet()
+        ss = OCC.Core.BRepTools.BRepTools_ShapeSet()
         ss.ReadFromString(brep_data)
         occ_shape = ss.Shape(ss.NbShapes())
     except BaseException:
