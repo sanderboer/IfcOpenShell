@@ -29,21 +29,21 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from .code_editor_pane import code_edit
 
 try:
-    from OCC.Core.Display.pyqt5Display import qtViewer3d
+    from OCC.Display.pyqt5Display import qtViewer3d
 except BaseException:
-    import OCC.Core.Display
+    import OCC.Display
 
     try:
-        import OCC.Core.Display.backend
+        import OCC.Display.backend
     except BaseException:
         pass
 
     try:
-        OCC.Core.Display.backend.get_backend("qt-pyqt5")
+        OCC.Display.backend.get_backend("qt-pyqt5")
     except BaseException:
-        OCC.Core.Display.backend.load_backend("qt-pyqt5")
+        OCC.Display.backend.load_backend("qt-pyqt5")
 
-    from OCC.Core.Display.qtDisplay import qtViewer3d
+    from OCC.Display.qtDisplay import qtViewer3d
 
 from .main import settings, iterator
 from .occ_utils import display_shape

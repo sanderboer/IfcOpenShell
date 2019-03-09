@@ -47,10 +47,10 @@ DEFAULT_STYLES = {
 
 def initialize_display():
     import OCC.Core.V3d
-    import OCC.Core.Display.SimpleGui
+    import OCC.Display.SimpleGui
 
     global handle, main_loop, add_menu, add_function_to_menu
-    handle, main_loop, add_menu, add_function_to_menu = OCC.Core.Display.SimpleGui.init_display()
+    handle, main_loop, add_menu, add_function_to_menu = OCC.Display.SimpleGui.init_display()
 
     def setup():
         viewer_handle = handle.GetViewer()
