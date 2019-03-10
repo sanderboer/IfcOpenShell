@@ -12,6 +12,10 @@ import OCC.Core.AIS
 
 from collections import defaultdict, Iterable, OrderedDict
 
+is_python3 = sys.version_info.major == 3
+if is_python3:
+    unicode = str
+    
 try:
     QString = unicode
 except NameError:
@@ -365,7 +369,7 @@ class application(QtWidgets.QApplication):
         @staticmethod
         def ais_to_key(ais_handle):
             def yield_shapes():
-                ais = ais_handle.GetObject()
+                ais = ais_handle
                 if hasattr(ais, 'Shape'):
                     yield ais.Shape()
                     return
@@ -379,7 +383,7 @@ class application(QtWidgets.QApplication):
                     if not shp.IsNull():
                         yield shp
                 else:
-                    li = mult.GetObject().ConnectedTo()
+                    li = mult.ConnectedTo()
                     for i in range(li.Length()):
                         shp = OCC.Core.AIS.Handle_AIS_Shape.DownCast(li.Value(i + 1))
                         if not shp.IsNull():
@@ -431,7 +435,7 @@ class application(QtWidgets.QApplication):
                 shape = it.get()
                 product = f[shape.data.id]
                 ais = display_shape(shape, viewer_handle=v)
-                ais.GetObject().SetSelectionPriority(self.counter)
+                ais.SetSelectionPriority(self.counter)
                 self.ais_to_product[self.counter] = product
                 self.product_to_ais[product] = ais
                 self.counter += 1
@@ -494,7 +498,7 @@ class application(QtWidgets.QApplication):
             v.InitSelected()
             if v.MoreSelected():
                 ais = v.SelectedInteractive()
-                inst = self.ais_to_product[ais.GetObject().SelectionPriority()]
+                inst = self.ais_to_product[ais.SelectionPriority()]
                 self.instanceSelected.emit(inst)
 
     class window(QtWidgets.QMainWindow):

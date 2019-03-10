@@ -54,7 +54,7 @@ def initialize_display():
 
     def setup():
         viewer_handle = handle.GetViewer()
-        viewer = viewer_handle.GetObject()
+        viewer = viewer_handle
 
         def lights():
             viewer.InitActiveLights()
@@ -73,7 +73,7 @@ def initialize_display():
         for dir in [(3, 2, 1), (-1, -2, -3)]:
             light = OCC.Core.V3d.V3d_DirectionalLight(viewer_handle)
             light.SetDirection(*dir)
-            viewer.SetLightOn(light.GetHandle())
+            viewer.SetLightOn(light)
 
     setup()
     return handle
@@ -101,7 +101,7 @@ def display_shape(shape, clr=None, viewer_handle=None):
     else:
         representation = None
 
-    material = OCC.Core.Graphic3d.Graphic3d_MaterialAspect(OCC.Graphic3d.Graphic3d_NOM_PLASTER)
+    material = OCC.Core.Graphic3d.Graphic3d_MaterialAspect(OCC.Core.Graphic3d.Graphic3d_NOM_PLASTER)
     material.SetDiffuse(1)
 
     if representation and not clr:
@@ -123,7 +123,7 @@ def display_shape(shape, clr=None, viewer_handle=None):
             clr = tuple(clr)
             if len(clr) < 3 and len(clr) > 4:
                 raise Exception("Need 3 or 4 colour components. Got '%r'." % clr)
-            qclr = OCC.Core.Quantity.Quantity_Color(clr[0], clr[1], clr[2], OCC.Quantity.Quantity_TOC_RGB)
+            qclr = OCC.Core.Quantity.Quantity_Color(clr[0], clr[1], clr[2], OCC.Core.Quantity.Quantity_TOC_RGB)
         elif isinstance(clr, OCC.Core.Quantity.Quantity_Color):
             qclr = clr
         else:
@@ -149,11 +149,11 @@ def display_shape(shape, clr=None, viewer_handle=None):
                 if min(stl) < 0. or max(stl) > 1.:
                     default_style_applied = stl = DEFAULT_STYLES.get(representation.data.type,
                                                                      DEFAULT_STYLES["DEFAULT"])
-                subshape.SetColor(OCC.Core.Quantity.Quantity_Color(stl[0], stl[1], stl[2], OCC.Quantity.Quantity_TOC_RGB))
+                subshape.SetColor(OCC.Core.Quantity.Quantity_Color(stl[0], stl[1], stl[2], OCC.Core.Quantity.Quantity_TOC_RGB))
                 subshape.SetMaterial(material)
                 if len(stl) == 4 and stl[3] < 1.:
                     subshape.SetTransparency(1. - stl[3])
-                ais.Connect(subshape.GetHandle())
+                ais.Connect(subshape)
 
         # For some reason it is necessary to set transparency here again
         # in order for transparency to be rendered on the subshape.
@@ -176,10 +176,10 @@ def display_shape(shape, clr=None, viewer_handle=None):
         def r():
             return random.random() * 0.3 + 0.7
 
-        clr = OCC.Core.Quantity.Quantity_Color(r(), r(), r(), OCC.Quantity.Quantity_TOC_RGB)
+        clr = OCC.Core.Quantity.Quantity_Color(r(), r(), r(), OCC.Core.Quantity.Quantity_TOC_RGB)
         ais.SetColor(clr)
 
-    ais_handle = ais.GetHandle()
+    ais_handle = ais
     viewer_handle.Context.Display(ais_handle, False)
 
     return ais_handle
