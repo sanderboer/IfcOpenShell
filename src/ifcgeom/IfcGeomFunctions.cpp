@@ -3128,8 +3128,22 @@ bool IfcGeom::Kernel::triangulate_wire(const TopoDS_Wire& wire, TopTools_ListOfS
 
 	// Create a new face from the {u,v,0} wire and mesh the face
 	TopoDS_Face face = BRepBuilderAPI_MakeFace(mp.Wire());
+#if OCC_VERSION_HEX < 0x70300
+	//BRepMesh_IncrementalMesh(shape, deflection);
 	BRepMesh_IncrementalMesh(face, Precision::Confusion());
+#else
+        const Standard_Boolean isRelative       = Standard_False;
+        const Standard_Real    theAngDeflection = 0.5;
+        const Standard_Boolean isInParallel     = Standard_True;
+        const Standard_Boolean adaptiveMin      = Standard_False;
 
+	BRepMesh_IncrementalMesh(face, Precision::Confusion(),
+                                 isRelative, theAngDeflection,
+                                 isInParallel, adaptiveMin );
+        
+      
+#endif
+ 
 	int n123[3]; 
 	TopLoc_Location loc;
 	Handle_Poly_Triangulation tri = BRep_Tool::Triangulation(face, loc);
