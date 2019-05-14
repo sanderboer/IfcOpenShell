@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 DIR="$( cd -P "$( dirname "$0" )" && pwd )"
-pushd ${DIR}/../
+pushd ${DIR}
 ROOT_DIR=${PWD}
 popd
 
@@ -9,9 +9,12 @@ UNAME=`uname`
 BUILD_TYPE="Debug"
 ARCHIVE=${BUILD_DIR}/archive
 BUILD_DIR=${ROOT_DIR}/build_mt 
+
 SYSTEM_OCCT_PATH="/usr"
 OCC_INCLUDE_DIR="${SYSTEM_OCCT_PATH}/include/opencascade"
 OCC_LIBRARY_DIR="${SYSTEM_OCCT_PATH}/lib"
+
+GENERATOR="Unix Makefiles"
 
 NO_WARNINGS="-Wno-overloaded-virtual -Wno-ignored-qualifiers"
 CMAKE_SETTINGS="-DCMAKE_EXPORT_COMPILE_COMMANDS=ON "
@@ -44,4 +47,4 @@ if [ ! -d $BUILD_DIR ]; then
 fi
 cd $BUILD_DIR
 
-cmake -G"${GENERATOR}" ${CMAKE_SETTINGS} $ROOT_DIR/IfcOpenshell/cmake/
+cmake -G"${GENERATOR}" ${CMAKE_SETTINGS} $ROOT_DIR/cmake/
