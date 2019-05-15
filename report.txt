@@ -1,0 +1,5 @@
+Parallel meshing build: 
+Conversion took 5 minutes 22 seconds
+
+Master build: 
+Conversion took 5 minutes 29 seconds

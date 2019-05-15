@@ -29,10 +29,10 @@
 
 #include <BRepTools.hxx>
 #include <TopExp_Explorer.hxx>
-
 #include <BRepAdaptor_Curve.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <Geom_SphericalSurface.hxx>
+#include <Standard_Version.hxx>
 
 #include "../ifcgeom/IfcGeomIteratorSettings.h"
 #include "../ifcgeom/IfcGeomMaterial.h"
@@ -189,21 +189,34 @@ public:
       // Triangulate the shape
       try
       {
-#if OCC_VERSION_HEX < 0x70300
-        BRepMesh_IncrementalMesh(s, settings().deflection_tolerance());
-#else
-        const Standard_Boolean isRelative       = Standard_False;
-        const Standard_Real    theAngDeflection = 0.5;
-        const Standard_Boolean isInParallel     = Standard_True;
-        const Standard_Boolean adaptiveMin      = Standard_False;
+        // occt 6.9.1<:
+        // BRepMesh_IncrementalMesh (const TopoDS_Shape &theShape,
+        //                           const Standard_Real theLinDeflection,
+        //                           const Standard_Boolean isRelative=Standard_False,
+        //                           const Standard_Real theAngDeflection=0.5,
+        //                           const Standard_Boolean isInParallel=Standard_False)
+        // occt 7.0.0 > :
+        // BRepMesh_IncrementalMesh (const TopoDS_Shape &theShape,
+        //                           const Standard_Real theLinDeflection,
+        //                           const Standard_Boolean isRelative=Standard_False,
+        //                           const Standard_Real theAngDeflection=0.5,
+        //                           const Standard_Boolean isInParallel=Standard_False,
+        //                           const Standard_Boolean adaptiveMin=Standard_False)
+const Standard_Boolean isRelative = Standard_False;
+        const Standard_Real theAngDeflection = 0.5;
+        const Standard_Boolean isInParallel = Standard_True;
+        const Standard_Boolean adaptiveMin = Standard_False;
 
+#if OCC_VERSION_HEX < 0x70000
+         BRepMesh_IncrementalMesh(s, settings().deflection_tolerance(),
+                                  isRelative, theAngDeflection, isInParallel);
+
+#else
         BRepMesh_IncrementalMesh(s, settings().deflection_tolerance(),
-                                 isRelative, theAngDeflection,
-                                 isInParallel, adaptiveMin );
-        
-      
+                                 isRelative, theAngDeflection, isInParallel,
+                                 adaptiveMin);
+
 #endif
- 
       }
       catch (...)
       {

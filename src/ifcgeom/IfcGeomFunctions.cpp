@@ -128,7 +128,7 @@
 
 #include <Poly_Triangulation.hxx>
 #include <Poly_Array1OfTriangle.hxx>
-
+#include <Standard_Version.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>
@@ -3128,20 +3128,19 @@ bool IfcGeom::Kernel::triangulate_wire(const TopoDS_Wire& wire, TopTools_ListOfS
 
 	// Create a new face from the {u,v,0} wire and mesh the face
 	TopoDS_Face face = BRepBuilderAPI_MakeFace(mp.Wire());
-#if OCC_VERSION_HEX < 0x70300
-	//BRepMesh_IncrementalMesh(shape, deflection);
-	BRepMesh_IncrementalMesh(face, Precision::Confusion());
-#else
+
         const Standard_Boolean isRelative       = Standard_False;
         const Standard_Real    theAngDeflection = 0.5;
         const Standard_Boolean isInParallel     = Standard_True;
         const Standard_Boolean adaptiveMin      = Standard_False;
-
+#if OCC_VERSION_HEX < 0x70000
+	//BRepMesh_IncrementalMesh(shape, deflection);
+         BRepMesh_IncrementalMesh(s, settings().deflection_tolerance(),
+                                  isRelative, theAngDeflection, isInParallel);
+#else
 	BRepMesh_IncrementalMesh(face, Precision::Confusion(),
                                  isRelative, theAngDeflection,
                                  isInParallel, adaptiveMin );
-        
-      
 #endif
  
 	int n123[3]; 
