@@ -94,62 +94,6 @@ namespace IfcGeom {
         
 template <typename P>
 class Iterator {
- private:
-  Iterator(const Iterator&); // N/I
-  Iterator& operator=(const Iterator&); // N/I
-
-  Kernel kernel;
-  IteratorSettings settings;
-
-  IfcParse::IfcFile* ifc_file;
-
-  // A container and iterator for IfcRepresentations
-  IfcSchema::IfcRepresentation::list::ptr representations;
-  IfcSchema::IfcRepresentation::list::it representation_iterator;
-
-  // The object is fetched beforehand to be sure that get() returns a valid element
-  TriangulationElement<P>* current_triangulation;
-  BRepElement<P>* current_shape_model;
-  SerializedElement<P>* current_serialization;
-                
-  // A container and iterator for IfcBuildingElements for the current IfcRepresentation referenced by *representation_iterator
-  IfcSchema::IfcProduct::list::ptr ifcproducts;
-  IfcSchema::IfcProduct::list::it ifcproduct_iterator;
-
-
-  IfcSchema::IfcRepresentation::list::ptr ok_mapped_representations;
-
-  int done;
-  int total;
-
-  std::string unit_name;
-  double unit_magnitude;
-
-  gp_XYZ bounds_min_;
-  gp_XYZ bounds_max_;
-
-  std::vector<filter_t> filters_;
-
-  struct filter_match
-  {
-    filter_match(IfcSchema::IfcProduct *prod) : product(prod) {}
-    bool operator()(const filter_t& filter) const { return filter(product);  }
-
-    IfcSchema::IfcProduct* product;
-  };
-
-  void initUnits() {
-    IfcSchema::IfcProject::list::ptr projects = ifc_file->entitiesByType<IfcSchema::IfcProject>();
-    if (projects->size() == 1) {
-      IfcSchema::IfcProject* project = *projects->begin();
-      std::pair<std::string, double> length_unit = kernel.initializeUnits(project->UnitsInContext());
-      unit_name = length_unit.first;
-      unit_magnitude = length_unit.second;
-    } else {
-      Logger::Error("A single IfcProject is expected (encountered " + boost::lexical_cast<std::string>(projects->size()) + "); unable to read unit information.");
-    }
-  }
-
   /// @todo public/private sections all over the place: move all public to the beginning of the class
  public:
   Iterator(const IteratorSettings& settings, IfcParse::IfcFile* file, std::vector<IfcGeom::filter_t>& filters)
@@ -159,6 +103,48 @@ class Iterator {
       , owns_ifc_file(false)
   {
     _initialize();
+  }
+
+  Iterator(const IteratorSettings& settings, IfcParse::IfcFile* file)
+      : settings(settings)
+      , ifc_file(file)
+      , owns_ifc_file(false)
+  {
+    _initialize();
+  }
+
+  Iterator(const IteratorSettings& settings, const std::string& filename)
+      : settings(settings)
+      , ifc_file(new IfcParse::IfcFile)
+      , owns_ifc_file(true)
+  {
+    ifc_file->Init(filename);
+    _initialize();
+  }
+
+  Iterator(const IteratorSettings& settings, void* data, int length)
+      : settings(settings)
+      , ifc_file(new IfcParse::IfcFile)
+      , owns_ifc_file(true)
+  {
+    ifc_file->Init(data, length);
+    _initialize();
+  }
+  Iterator(const IteratorSettings& settings, std::istream& filestream, int length)
+      : settings(settings)
+      , ifc_file(new IfcParse::IfcFile)
+      , owns_ifc_file(true)
+  {
+    ifc_file->Init(filestream, length);
+    _initialize();
+  }
+
+  ~Iterator() {
+    if (owns_ifc_file) {
+      delete ifc_file;
+    }
+
+    free_shapes();
   }
 
   bool initialize() {
@@ -352,160 +338,6 @@ class Iterator {
   const gp_XYZ& bounds_min() const { return bounds_min_; }
   const gp_XYZ& bounds_max() const { return bounds_max_; }
 
- private:
-  // Move to the next IfcRepresentation
-  void _nextShape() {
-    // In order to conserve memory and reduce cache insertion times, the cache is
-    // cleared after an arbitrary number of processed representations. This has been
-    // benchmarked extensively: https://github.com/IfcOpenShell/IfcOpenShell/pull/47
-    static const int clear_interval = 64;
-    if (done % clear_interval == clear_interval - 1) {
-      kernel.purge_cache();
-    }
-    ifcproducts.reset();
-    ++ representation_iterator;
-    ++ done;
-  }
-
-  bool geometry_reuse_ok_for_current_representation_;
-
-  bool reuse_ok_(const IfcSchema::IfcProduct::list::ptr& products) {
-    // With world coords enabled, object transformations are directly applied to
-    // the BRep. There is no way to re-use the geometry for multiple products.
-    if (settings.get(IteratorSettings::USE_WORLD_COORDS)) {
-      return false;
-    }
-
-    std::set<const IfcSchema::IfcMaterial*> associated_single_materials;
-
-    for (IfcSchema::IfcProduct::list::it it = products->begin(); it != products->end(); ++it) {
-      IfcSchema::IfcProduct* product = *it;
-
-      if (!settings.get(IteratorSettings::DISABLE_OPENING_SUBTRACTIONS) && kernel.find_openings(product)->size()) {
-        return false;
-      }
-
-      if (settings.get(IteratorSettings::APPLY_LAYERSETS)) {
-        IfcSchema::IfcRelAssociates::list::ptr associations = product->HasAssociations();
-        for (IfcSchema::IfcRelAssociates::list::it jt = associations->begin(); jt != associations->end(); ++jt) {
-          IfcSchema::IfcRelAssociatesMaterial* assoc = (*jt)->as<IfcSchema::IfcRelAssociatesMaterial>();
-          if (assoc) {
-            if (assoc->RelatingMaterial()->is(IfcSchema::Type::IfcMaterialLayerSetUsage)) {
-              // TODO: Check whether single layer? 
-              return false;
-            }
-          }
-        }
-      }
-
-      // Note that this can be a nullptr (!), but the fact that set size should be one still holds
-      associated_single_materials.insert(kernel.get_single_material_association(product));
-      if (associated_single_materials.size() > 1) return false;
-    }
-
-    return associated_single_materials.size() == 1;
-  }
-
-  BRepElement<P>* create_shape_model_for_next_entity() {
-    for (;;) {
-      IfcSchema::IfcRepresentation* representation;
-
-      if ( representation_iterator == representations->end() ) {
-        representations.reset();
-        return 0; // reached the end of our list of representations
-      }
-      representation = *representation_iterator;
-
-      if (!ifcproducts) {
-        // Init. the list of filtered IfcProducts for this representation
-        ifcproducts = IfcSchema::IfcProduct::list::ptr(new IfcSchema::IfcProduct::list);
-        IfcSchema::IfcProduct::list::ptr unfiltered_products = kernel.products_represented_by(representation);
-        // Include only the desired products for processing.
-        for (IfcSchema::IfcProduct::list::it jt = unfiltered_products->begin(); jt != unfiltered_products->end(); ++jt) {
-          IfcSchema::IfcProduct* prod = *jt;
-          if (boost::all(filters_, filter_match(prod))) {
-            ifcproducts->push(prod);
-          }
-        }
-
-        if (ifcproducts->size() == 0) {
-          _nextShape();
-          continue;
-        }
-
-        geometry_reuse_ok_for_current_representation_ = reuse_ok_(ifcproducts);
-
-        IfcSchema::IfcRepresentationMap::list::ptr maps = representation->RepresentationMap();
-
-        if (!geometry_reuse_ok_for_current_representation_ && maps->size() == 1) {
-          // unfiltered_products contains products represented by this representation by means of mapped items.
-          // For example because of openings applied to products, reuse might not be acceptable and then the
-          // products will be processed by means of their immediate representation and not the mapped representation.
-
-          // IfcRepresentationMaps are also used for IfcTypeProducts, so an additional check is performed whether the map
-          // is indeed used by IfcMappedItems.
-          IfcSchema::IfcRepresentationMap* map = *maps->begin();
-          if (map->MapUsage()->size() > 0) {
-            _nextShape();
-            continue;
-          }
-        }
-
-        // Check if this represenation has (or will be) processed as part its mapped representation
-        bool representation_processed_as_mapped_item = false;
-        IfcSchema::IfcRepresentation* representation_mapped_to = kernel.representation_mapped_to(representation);
-        if (representation_mapped_to) {
-          representation_processed_as_mapped_item = geometry_reuse_ok_for_current_representation_ ||
-                                                    ok_mapped_representations->contains(representation_mapped_to);
-        }
-
-        if (representation_processed_as_mapped_item) {
-          ok_mapped_representations->push(representation_mapped_to);
-          _nextShape();
-          continue;
-        }
-
-        ifcproduct_iterator = ifcproducts->begin();
-      }
-
-      // Have we reached the end of our list of IfcProducts?
-      if ( ifcproduct_iterator == ifcproducts->end() ) {
-        _nextShape();
-        continue;
-      }
-
-      IfcSchema::IfcProduct* product = *ifcproduct_iterator;
-      Logger::SetProduct(product);
-
-      BRepElement<P>* element;
-      if (ifcproduct_iterator == ifcproducts->begin() || !geometry_reuse_ok_for_current_representation_) {
-        element = kernel.create_brep_for_representation_and_product<P>(settings, representation, product);
-      } else {
-        element = kernel.create_brep_for_processed_representation(settings, representation, product, current_shape_model);
-      }
-
-      Logger::SetProduct(boost::none);
-
-      if (!element) {
-        _nextShape();
-        continue;
-      }
-
-      return element;
-    }
-  }
-
-  void free_shapes() {
-    // Free all possible representations of the current geometrical entity
-    delete current_triangulation;
-    current_triangulation = 0;
-    delete current_serialization;
-    current_serialization = 0;
-    delete current_shape_model;
-    current_shape_model = 0;
-  }
-
- public:
   /// Returns what would be the product for the next shape representation
   /// @todo Double-check and test the impl.
   //IfcSchema::IfcProduct* peek_next() const
@@ -522,7 +354,8 @@ class Iterator {
 
   /// Moves to the next shape representation, create its geometry, and returns the associated product.
   /// Use get() to retrieve the created geometry.
-  IfcSchema::IfcProduct* next() {
+  IfcSchema::IfcProduct* next()
+  {
     // Increment the iterator over the list of products using the current
     // shape representation
     if (ifcproducts) {
@@ -700,7 +533,214 @@ class Iterator {
 
     return next_shape_model ? next_shape_model->product() : 0;
   }
+
+
  private:
+  Iterator(const Iterator&); // N/I
+  Iterator& operator=(const Iterator&); // N/I
+
+  Kernel kernel;
+  IteratorSettings settings;
+  IfcParse::IfcFile* ifc_file;
+
+  // A container and iterator for IfcRepresentations
+  IfcSchema::IfcRepresentation::list::ptr representations;
+  IfcSchema::IfcRepresentation::list::it representation_iterator;
+
+  // The object is fetched beforehand to be sure that get() returns a valid element
+  TriangulationElement<P>* current_triangulation;
+  BRepElement<P>* current_shape_model;
+  SerializedElement<P>* current_serialization;
+                
+  // A container and iterator for IfcBuildingElements for the current IfcRepresentation referenced by *representation_iterator
+  IfcSchema::IfcProduct::list::ptr ifcproducts;
+  IfcSchema::IfcProduct::list::it ifcproduct_iterator;
+
+  IfcSchema::IfcRepresentation::list::ptr ok_mapped_representations;
+
+  int done;
+  int total;
+
+  std::string unit_name;
+  double unit_magnitude;
+
+  gp_XYZ bounds_min_;
+  gp_XYZ bounds_max_;
+
+  std::vector<filter_t> filters_;
+
+  struct filter_match
+  {
+    filter_match(IfcSchema::IfcProduct *prod) : product(prod) {}
+    bool operator()(const filter_t& filter) const { return filter(product);  }
+
+    IfcSchema::IfcProduct* product;
+  };
+
+  void initUnits() {
+    IfcSchema::IfcProject::list::ptr projects = ifc_file->entitiesByType<IfcSchema::IfcProject>();
+    if (projects->size() == 1) {
+      IfcSchema::IfcProject* project = *projects->begin();
+      std::pair<std::string, double> length_unit = kernel.initializeUnits(project->UnitsInContext());
+      unit_name = length_unit.first;
+      unit_magnitude = length_unit.second;
+    } else {
+      Logger::Error("A single IfcProject is expected (encountered " + boost::lexical_cast<std::string>(projects->size()) + "); unable to read unit information.");
+    }
+  }
+
+ // Move to the next IfcRepresentation
+  void _nextShape() {
+    // In order to conserve memory and reduce cache insertion times, the cache is
+    // cleared after an arbitrary number of processed representations. This has been
+    // benchmarked extensively: https://github.com/IfcOpenShell/IfcOpenShell/pull/47
+    static const int clear_interval = 64;
+    if (done % clear_interval == clear_interval - 1) {
+      kernel.purge_cache();
+    }
+    ifcproducts.reset();
+    ++ representation_iterator;
+    ++ done;
+  }
+
+  bool geometry_reuse_ok_for_current_representation_;
+
+  bool reuse_ok_(const IfcSchema::IfcProduct::list::ptr& products) {
+    // With world coords enabled, object transformations are directly applied to
+    // the BRep. There is no way to re-use the geometry for multiple products.
+    if (settings.get(IteratorSettings::USE_WORLD_COORDS)) {
+      return false;
+    }
+
+    std::set<const IfcSchema::IfcMaterial*> associated_single_materials;
+
+    for (IfcSchema::IfcProduct::list::it it = products->begin(); it != products->end(); ++it) {
+      IfcSchema::IfcProduct* product = *it;
+
+      if (!settings.get(IteratorSettings::DISABLE_OPENING_SUBTRACTIONS) && kernel.find_openings(product)->size()) {
+        return false;
+      }
+
+      if (settings.get(IteratorSettings::APPLY_LAYERSETS)) {
+        IfcSchema::IfcRelAssociates::list::ptr associations = product->HasAssociations();
+        for (IfcSchema::IfcRelAssociates::list::it jt = associations->begin(); jt != associations->end(); ++jt) {
+          IfcSchema::IfcRelAssociatesMaterial* assoc = (*jt)->as<IfcSchema::IfcRelAssociatesMaterial>();
+          if (assoc) {
+            if (assoc->RelatingMaterial()->is(IfcSchema::Type::IfcMaterialLayerSetUsage)) {
+              // TODO: Check whether single layer? 
+              return false;
+            }
+          }
+        }
+      }
+
+      // Note that this can be a nullptr (!), but the fact that set size should be one still holds
+      associated_single_materials.insert(kernel.get_single_material_association(product));
+      if (associated_single_materials.size() > 1) return false;
+    }
+
+    return associated_single_materials.size() == 1;
+  }
+
+  BRepElement<P>* create_shape_model_for_next_entity() {
+    for (;;) {
+      IfcSchema::IfcRepresentation* representation;
+
+      if ( representation_iterator == representations->end() ) {
+        representations.reset();
+        return 0; // reached the end of our list of representations
+      }
+      representation = *representation_iterator;
+
+      if (!ifcproducts) {
+        // Init. the list of filtered IfcProducts for this representation
+        ifcproducts = IfcSchema::IfcProduct::list::ptr(new IfcSchema::IfcProduct::list);
+        IfcSchema::IfcProduct::list::ptr unfiltered_products = kernel.products_represented_by(representation);
+        // Include only the desired products for processing.
+        for (IfcSchema::IfcProduct::list::it jt = unfiltered_products->begin(); jt != unfiltered_products->end(); ++jt) {
+          IfcSchema::IfcProduct* prod = *jt;
+          if (boost::all(filters_, filter_match(prod))) {
+            ifcproducts->push(prod);
+          }
+        }
+
+        if (ifcproducts->size() == 0) {
+          _nextShape();
+          continue;
+        }
+
+        geometry_reuse_ok_for_current_representation_ = reuse_ok_(ifcproducts);
+
+        IfcSchema::IfcRepresentationMap::list::ptr maps = representation->RepresentationMap();
+
+        if (!geometry_reuse_ok_for_current_representation_ && maps->size() == 1) {
+          // unfiltered_products contains products represented by this representation by means of mapped items.
+          // For example because of openings applied to products, reuse might not be acceptable and then the
+          // products will be processed by means of their immediate representation and not the mapped representation.
+
+          // IfcRepresentationMaps are also used for IfcTypeProducts, so an additional check is performed whether the map
+          // is indeed used by IfcMappedItems.
+          IfcSchema::IfcRepresentationMap* map = *maps->begin();
+          if (map->MapUsage()->size() > 0) {
+            _nextShape();
+            continue;
+          }
+        }
+
+        // Check if this represenation has (or will be) processed as part its mapped representation
+        bool representation_processed_as_mapped_item = false;
+        IfcSchema::IfcRepresentation* representation_mapped_to = kernel.representation_mapped_to(representation);
+        if (representation_mapped_to) {
+          representation_processed_as_mapped_item = geometry_reuse_ok_for_current_representation_ ||
+                                                    ok_mapped_representations->contains(representation_mapped_to);
+        }
+
+        if (representation_processed_as_mapped_item) {
+          ok_mapped_representations->push(representation_mapped_to);
+          _nextShape();
+          continue;
+        }
+
+        ifcproduct_iterator = ifcproducts->begin();
+      }
+
+      // Have we reached the end of our list of IfcProducts?
+      if ( ifcproduct_iterator == ifcproducts->end() ) {
+        _nextShape();
+        continue;
+      }
+
+      IfcSchema::IfcProduct* product = *ifcproduct_iterator;
+      Logger::SetProduct(product);
+
+      BRepElement<P>* element;
+      if (ifcproduct_iterator == ifcproducts->begin() || !geometry_reuse_ok_for_current_representation_) {
+        element = kernel.create_brep_for_representation_and_product<P>(settings, representation, product);
+      } else {
+        element = kernel.create_brep_for_processed_representation(settings, representation, product, current_shape_model);
+      }
+
+      Logger::SetProduct(boost::none);
+
+      if (!element) {
+        _nextShape();
+        continue;
+      }
+
+      return element;
+    }
+  }
+
+  void free_shapes() {
+    // Free all possible representations of the current geometrical entity
+    delete current_triangulation;
+    current_triangulation = 0;
+    delete current_serialization;
+    current_serialization = 0;
+    delete current_shape_model;
+    current_shape_model = 0;
+  }
+
   void _initialize() {
     current_triangulation = 0;
     current_shape_model = 0;
@@ -723,47 +763,7 @@ class Iterator {
   }
 
   bool owns_ifc_file;
- public:
-  Iterator(const IteratorSettings& settings, IfcParse::IfcFile* file)
-      : settings(settings)
-      , ifc_file(file)
-      , owns_ifc_file(false)
-  {
-    _initialize();
-  }
-  Iterator(const IteratorSettings& settings, const std::string& filename)
-      : settings(settings)
-      , ifc_file(new IfcParse::IfcFile)
-      , owns_ifc_file(true)
-  {
-    ifc_file->Init(filename);
-    _initialize();
-  }
-  Iterator(const IteratorSettings& settings, void* data, int length)
-      : settings(settings)
-      , ifc_file(new IfcParse::IfcFile)
-      , owns_ifc_file(true)
-  {
-    ifc_file->Init(data, length);
-    _initialize();
-  }
-  Iterator(const IteratorSettings& settings, std::istream& filestream, int length)
-      : settings(settings)
-      , ifc_file(new IfcParse::IfcFile)
-      , owns_ifc_file(true)
-  {
-    ifc_file->Init(filestream, length);
-    _initialize();
-  }
-
-  ~Iterator() {
-    if (owns_ifc_file) {
-      delete ifc_file;
-    }
-
-    free_shapes();
-  }
-};
+ };
 }
 
 #endif

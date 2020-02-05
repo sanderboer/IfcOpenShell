@@ -1504,8 +1504,9 @@ int main(int argc, char **argv)
          ifcproduct_iterator != ifcproducts->end(); ifcproduct_iterator++)
     {
       IfcproductRepresentation ir;
+      IfcSchema::IfcProduct *p = *ifcproduct_iterator;
       ir.index = index_count;
-      ir.product = *ifcproduct_iterator;
+      ir.product = p;
       ir.representation = representation;
       IfcproductRepresentations.push_back(ir);
       index_count++;
@@ -1571,7 +1572,7 @@ int main(int argc, char **argv)
     //write_element(serializer, rep, is_tesselated);
     cout_ << "writing to file, element #: " << rep->index << "\n";
     IfcGeom::Element<real_t> *geom_object = rep->element;
-    if (is_tesselated)
+    if (serializer->isTesselated())
   {
     serializer->write(
         static_cast<const IfcGeom::TriangulationElement<real_t> *>(

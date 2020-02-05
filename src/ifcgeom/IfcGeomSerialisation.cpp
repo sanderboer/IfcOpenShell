@@ -605,8 +605,38 @@ IfcSchema::IfcProductDefinitionShape* IfcGeom::serialise(const TopoDS_Shape& sha
 }
 
 IfcSchema::IfcProductDefinitionShape* IfcGeom::tesselate(const TopoDS_Shape& shape, double deflection) {
-	BRepMesh_IncrementalMesh(shape, deflection);
 
+ 	// BRepMesh_IncrementalMesh (const TopoDS_Shape &theShape,
+        //                           const Standard_Real theLinDeflection,
+        //                           const Standard_Boolean isRelative=Standard_False,
+        //                           const Standard_Real theAngDeflection=0.5,
+        //                           const Standard_Boolean isInParallel=Standard_False,
+        //                           const Standard_Boolean adaptiveMin=Standard_False)
+
+
+        // @todo: check which OCCT versions have differing argument numbers.
+#if OCC_VERSION_HEX < 0x70300
+	BRepMesh_IncrementalMesh(shape, deflection);
+#else
+        const Standard_Boolean isRelative       = Standard_False;
+        const Standard_Real    theAngDeflection = 0.5;
+        const Standard_Boolean isInParallel     = Standard_True;
+        const Standard_Boolean adaptiveMin      = Standard_False;
+
+	BRepMesh_IncrementalMesh(shape, deflection,
+                                 isRelative, theAngDeflection,
+                                 isInParallel, adaptiveMin );
+        
+ 	// BRepMesh_IncrementalMesh (const TopoDS_Shape &theShape,
+        //                           const Standard_Real theLinDeflection,
+        //                           const Standard_Boolean isRelative=Standard_False,
+        //                           const Standard_Real theAngDeflection=0.5,
+        //                           const Standard_Boolean isInParallel=Standard_False,
+        //                           const Standard_Boolean adaptiveMin=Standard_False)
+
+       
+#endif
+        
 	IfcSchema::IfcFace::list::ptr faces(new IfcSchema::IfcFace::list);
 
 	for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
