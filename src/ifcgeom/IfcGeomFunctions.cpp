@@ -3731,10 +3731,10 @@ bool IfcGeom::Kernel::wire_intersections(const TopoDS_Wire& wire, TopTools_ListO
 			
 			double u11, u12, u21, u22, U1, U2;
 
-                        thread_local Handle(Geom_Curve) c0 = BRep_Tool::Curve(wd->Edge(i + 1), u11, u12);
-                        thread_local Handle(Geom_Curve) c1 = BRep_Tool::Curve(wd->Edge(j + 1), u21, u22);
-
-                        GeomAPI_ExtremaCurveCurve ecc( c0, c1 );
+                        GeomAPI_ExtremaCurveCurve ecc(
+                            BRep_Tool::Curve(wd->Edge(i + 1), u11, u12),
+                            BRep_Tool::Curve(wd->Edge(j + 1), u21, u22)
+                                                      );
 			// @todo: extend this to work in case of multiple extrema and curved segments.
 			const bool unbounded_intersects = (!ecc.Extrema().IsParallel() && ecc.NbExtrema() == 1 && ecc.Distance(1) < eps);
 			if (unbounded_intersects) {
