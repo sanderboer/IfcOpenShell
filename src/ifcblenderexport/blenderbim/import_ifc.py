@@ -16,46 +16,63 @@ class MaterialCreator():
         self.parsed_meshes = []
         self.ifc_import_settings = ifc_import_settings
 
-    def create(self, element, object, mesh):
-        self.object = object
+    def create(self, element, obj, mesh):
+        self.obj = obj
         self.mesh = mesh
         if not element.Representation:
             return
         if self.ifc_import_settings.should_treat_styled_item_as_material \
-            and self.mesh.name in self.parsed_meshes:
+                and self.mesh.name in self.parsed_meshes:
             return
-        for item in element.Representation.Representations[0].Items:
-            if item.is_a('IfcMappedItem'):
-                item = item.MappingSource.MappedRepresentation.Items[0]
-            if item.StyledByItem:
-                styled_item = item.StyledByItem[0]
-                if styled_item.Name:
-                    material_name = styled_item.Name
-                # This is for a bug in Revit where Revit exports this in IFC4
-                elif styled_item.Styles[0] \
-                        and styled_item.Styles[0].is_a('IfcPresentationStyleAssignment') \
-                        and styled_item.Styles[0].Styles[0].Name:
-                    material_name = styled_item.Styles[0].Styles[0].Name
-                elif styled_item.Styles[0] \
-                        and styled_item.Styles[0].is_a('IfcPresentationStyle') \
-                        and styled_item.Styles[0].Name:
-                    material_name = styled_item.Styles[0].Name
-                else:
-                    material_name = str(styled_item.id())
-                if material_name not in self.materials:
-                    self.materials[material_name] = bpy.data.materials.new(material_name)
-                    self.parse_styled_item(item.StyledByItem[0], self.materials[material_name])
-                if self.ifc_import_settings.should_treat_styled_item_as_material:
-                    # Revit workaround: since Revit exports all material
-                    # assignments as individual object styled items. Treating
-                    # them as reusable materials makes things much more
-                    # efficient in Blender.
-                    if self.mesh.name not in self.parsed_meshes:
-                        self.assign_material_to_mesh(self.materials[material_name])
-                else:
-                    # Proper behaviour
-                    self.assign_material_to_mesh(self.materials[material_name], is_styled_item=True)
-                return # styled items override material styles
+        if self.parse_representations(element):
+            return # styled items override material styles
+        self.parse_material(element)
+
+    def parse_representations(self, element):
+        for representation in element.Representation.Representations:
+            if self.parse_representation(representation):
+                return True
+
+    def parse_representation(self, representation):
+        for item in representation.Items:
+            if self.parse_representation_item(item):
+                return True
+
+    def parse_representation_item(self, item):
+        if item.is_a('IfcMappedItem'):
+            item = item.MappingSource.MappedRepresentation.Items[0]
+        if not item.StyledByItem:
+            return
+        styled_item = item.StyledByItem[0]
+        if styled_item.Name:
+            material_name = styled_item.Name
+        # This is for a bug in Revit where Revit exports this in IFC4
+        elif styled_item.Styles[0] \
+                and styled_item.Styles[0].is_a('IfcPresentationStyleAssignment') \
+                and styled_item.Styles[0].Styles[0].Name:
+            material_name = styled_item.Styles[0].Styles[0].Name
+        elif styled_item.Styles[0] \
+                and styled_item.Styles[0].is_a('IfcPresentationStyle') \
+                and styled_item.Styles[0].Name:
+            material_name = styled_item.Styles[0].Name
+        else:
+            material_name = str(styled_item.id())
+        if material_name not in self.materials:
+            self.materials[material_name] = bpy.data.materials.new(material_name)
+            self.parse_styled_item(item.StyledByItem[0], self.materials[material_name])
+        if self.ifc_import_settings.should_treat_styled_item_as_material:
+            # Revit workaround: since Revit exports all material
+            # assignments as individual object styled items. Treating
+            # them as reusable materials makes things much more
+            # efficient in Blender.
+            if self.mesh.name not in self.parsed_meshes:
+                self.assign_material_to_mesh(self.materials[material_name])
+        else:
+            # Proper behaviour
+            self.assign_material_to_mesh(self.materials[material_name], is_styled_item=True)
+        return True
+
+    def parse_material(self, element):
         for association in element.HasAssociations:
             if association.is_a('IfcRelAssociatesMaterial'):
                 material_select = association.RelatingMaterial
@@ -96,7 +113,9 @@ class MaterialCreator():
             for surface_style in style.Styles:
                 if surface_style.is_a('IfcSurfaceStyleShading'):
                     alpha = 1.
-                    if surface_style.Transparency:
+                    # Transparency was added in IFC4
+                    if hasattr(surface_style, 'Transparency') \
+                            and surface_style.Transparency:
                         alpha = 1 - surface_style.Transparency
                     material.diffuse_color = (
                         surface_style.SurfaceColour.Red,
@@ -115,8 +134,8 @@ class MaterialCreator():
         self.parsed_meshes.append(self.mesh.name)
         self.mesh.materials.append(material)
         if is_styled_item:
-            self.object.material_slots[0].link = 'OBJECT'
-            self.object.material_slots[0].material = material
+            self.obj.material_slots[0].link = 'OBJECT'
+            self.obj.material_slots[0].material = material
 
 class IfcImporter():
     def __init__(self, ifc_import_settings):
@@ -136,6 +155,7 @@ class IfcImporter():
         self.mesh_shapes = {}
         self.time = 0
         self.unit_scale = 1
+        self.added_data = {}
 
         self.material_creator = MaterialCreator(ifc_import_settings)
 
@@ -148,7 +168,8 @@ class IfcImporter():
         self.calculate_unit_scale()
         self.create_project()
         self.create_spatial_hierarchy()
-        self.create_aggregates()
+        if self.ifc_import_settings.should_import_aggregates:
+            self.create_aggregates()
         if self.ifc_import_settings.should_import_opening_elements:
             self.create_openings_collection()
         self.purge_diff()
@@ -160,6 +181,13 @@ class IfcImporter():
             self.create_products_legacy()
         else:
             self.create_products()
+        self.place_objects_in_spatial_tree()
+        if self.ifc_import_settings.should_merge_by_class:
+            self.merge_by_class()
+        elif self.ifc_import_settings.should_merge_by_material:
+            self.merge_by_material()
+        if self.ifc_import_settings.should_clean_mesh:
+            self.clean_mesh()
 
     def auto_set_workarounds(self):
         applications = self.file.by_type('IfcApplication')
@@ -271,7 +299,7 @@ class IfcImporter():
     def create_products_legacy(self):
         elements = self.file.by_type('IfcElement') + self.file.by_type('IfcSpace')
         for element in elements:
-            self.create_object(element)
+            self.create_product_legacy(element)
 
     def create_products(self):
         if self.ifc_import_settings.should_use_cpu_multiprocessing:
@@ -331,17 +359,54 @@ class IfcImporter():
         self.add_element_attributes(element, obj)
         self.add_element_document_relations(element, obj)
         self.add_defines_by_type_relation(element, obj)
-        self.place_object_in_spatial_tree(element, obj)
-        self.add_product_psets(element, obj)
+        self.add_product_definitions(element, obj)
+        self.added_data[element.GlobalId] = obj
 
-    def add_product_psets(self, element, obj):
+    def merge_by_class(self):
+        merge_set = {}
+        for obj in self.added_data.values():
+            if '/' in obj.name:
+                merge_set.setdefault(obj.name.split('/')[0], []).append(obj)
+        self.merge_objects(merge_set)
+
+    def merge_by_material(self):
+        merge_set = {}
+        for obj in self.added_data.values():
+            if not obj.material_slots:
+                merge_set.setdefault('no-material', []).append(obj)
+            else:
+                merge_set.setdefault(obj.material_slots[0].name, []).append(obj)
+        self.merge_objects(merge_set)
+
+    def merge_objects(self, merge_set):
+        for ifc_class, objs in merge_set.items():
+            context_override = {}
+            context_override['object'] = context_override['active_object'] = objs[0]
+            context_override['selected_objects'] = context_override['selected_editable_objects'] = objs
+            bpy.ops.object.join(context_override)
+
+    def clean_mesh(self):
+        for obj in self.added_data.values():
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        context_override = {}
+        bpy.ops.object.editmode_toggle(context_override)
+        bpy.ops.mesh.remove_doubles(context_override)
+        bpy.ops.mesh.tris_convert_to_quads(context_override)
+        bpy.ops.mesh.dissolve_limited(context_override)
+        bpy.ops.mesh.normals_make_consistent(context_override)
+        bpy.ops.object.editmode_toggle(context_override)
+
+    def add_product_definitions(self, element, obj):
         if not hasattr(element, 'IsDefinedBy') or not element.IsDefinedBy:
             return
         for definition in element.IsDefinedBy:
-            if not definition.is_a('IfcRelDefinesByProperties') \
-                    or not definition.RelatingPropertyDefinition.is_a('IfcPropertySet'):
+            if not definition.is_a('IfcRelDefinesByProperties'):
                 continue
-            self.add_pset(definition.RelatingPropertyDefinition, obj)
+            if definition.RelatingPropertyDefinition.is_a('IfcPropertySet'):
+                self.add_pset(definition.RelatingPropertyDefinition, obj)
+            elif definition.RelatingPropertyDefinition.is_a('IfcElementQuantity'):
+                self.add_qto(definition.RelatingPropertyDefinition, obj)
 
     def add_type_product_psets(self, element, obj):
         if not hasattr(element, 'HasPropertySets') or not element.HasPropertySets:
@@ -351,23 +416,44 @@ class IfcImporter():
                 self.add_pset(definition, obj)
 
     def add_pset(self, pset, obj):
-            new_pset = obj.BIMObjectProperties.override_psets.add()
-            new_pset.name = pset.Name
-            if new_pset.name in schema.ifc.psets:
-                for prop_name in schema.ifc.psets[new_pset.name]['HasPropertyTemplates'].keys():
-                    prop = new_pset.properties.add()
-                    prop.name = prop_name
-            for prop in pset.HasProperties:
-                if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
-                    index = new_pset.properties.find(prop.Name)
-                    if index >= 0:
-                        new_pset.properties[index].string_value = str(prop.NominalValue.wrappedValue)
-                    else:
-                        new_prop = new_pset.properties.add()
-                        new_prop.name = prop.Name
-                        new_prop.string_value = str(prop.NominalValue.wrappedValue)
+        new_pset = obj.BIMObjectProperties.override_psets.add()
+        new_pset.name = pset.Name
+        if new_pset.name in schema.ifc.psets:
+            for prop_name in schema.ifc.psets[new_pset.name]['HasPropertyTemplates'].keys():
+                prop = new_pset.properties.add()
+                prop.name = prop_name
+        for prop in pset.HasProperties:
+            if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
+                index = new_pset.properties.find(prop.Name)
+                if index >= 0:
+                    new_pset.properties[index].string_value = str(prop.NominalValue.wrappedValue)
+                else:
+                    new_prop = new_pset.properties.add()
+                    new_prop.name = prop.Name
+                    new_prop.string_value = str(prop.NominalValue.wrappedValue)
+
+    def add_qto(self, qto, obj):
+        new_qto = obj.BIMObjectProperties.qtos.add()
+        new_qto.name = qto.Name
+        if new_qto.name in schema.ifc.qtos:
+            for prop_name in schema.ifc.qtos[new_qto.name]['HasPropertyTemplates'].keys():
+                prop = new_qto.properties.add()
+                prop.name = prop_name
+        for prop in qto.Quantities:
+            if prop.is_a('IfcPhysicalSimpleQuantity'):
+                value = getattr(prop, '{}Value'.format(prop.is_a()[len('IfcQuantity'):]))
+                if not value:
+                    continue
+                index = new_qto.properties.find(prop.Name)
+                if index >= 0:
+                    new_qto.properties[index].string_value = str(value)
+                else:
+                    new_prop = new_qto.properties.add()
+                    new_prop.name = prop.Name
+                    new_prop.string_value = str(value)
 
     def add_defines_by_type_relation(self, element, obj):
+        related_type = None
         if self.file.schema == 'IFC2X3':
             if not hasattr(element, 'IsDefinedBy') or not element.IsDefinedBy:
                 return
@@ -379,7 +465,8 @@ class IfcImporter():
             if not hasattr(element, 'IsTypedBy') or not element.IsTypedBy:
                 return
             related_type = element.IsTypedBy[0].RelatingType
-        obj.BIMObjectProperties.type_product = self.type_products[related_type.GlobalId]
+        if related_type:
+            obj.BIMObjectProperties.relating_type = self.type_products[related_type.GlobalId]
 
     def load_diff(self):
         if not self.ifc_import_settings.diff_file:
@@ -412,10 +499,10 @@ class IfcImporter():
         bpy.context.scene.collection.children.link(self.project['blender'])
 
     def create_spatial_hierarchy(self):
-        elements = self.file.by_type('IfcSite') + self.file.by_type('IfcBuilding') + self.file.by_type('IfcBuildingStorey')
+        elements = self.file.by_type('IfcSpatialStructureElement')
         attempts = 0
         while len(self.spatial_structure_elements) < len(elements) \
-            and attempts <= len(elements):
+                and attempts <= len(elements):
             for element in elements:
                 name = self.get_name(element)
                 global_id = element.GlobalId
@@ -431,6 +518,9 @@ class IfcImporter():
                     self.spatial_structure_elements[global_id] = {
                         'blender': bpy.data.collections.new(name)}
                     self.project['blender'].children.link(self.spatial_structure_elements[global_id]['blender'])
+                elif element.is_a('IfcSpace'):
+                    # Spaces are treated specially as objects
+                    continue
                 elif parent_global_id in self.spatial_structure_elements:
                     self.spatial_structure_elements[global_id] = {
                         'blender': bpy.data.collections.new(name)}
@@ -477,7 +567,7 @@ class IfcImporter():
                 objects_to_purge.append(obj)
         bpy.ops.object.delete({'selected_objects': objects_to_purge})
 
-    def create_object(self, element):
+    def create_product_legacy(self, element):
         if self.diff \
                 and element.GlobalId not in self.diff['added'] \
                 and element.GlobalId not in self.diff['changed'].keys():
@@ -513,7 +603,6 @@ class IfcImporter():
         obj.matrix_world = self.get_element_matrix(element, mesh_name)
         self.add_element_attributes(element, obj)
         self.add_element_document_relations(element, obj)
-        self.place_object_in_spatial_tree(element, obj)
 
     def add_element_document_relations(self, element, obj):
         for association in element.HasAssociations:
@@ -522,11 +611,20 @@ class IfcImporter():
                 document = obj.BIMObjectProperties.documents.add()
                 document.file = document_reference.Location
 
+    def place_objects_in_spatial_tree(self):
+        for global_id, obj in self.added_data.items():
+            self.place_object_in_spatial_tree(self.file.by_guid(global_id), obj)
+
     def place_object_in_spatial_tree(self, element, obj):
         if hasattr(element, 'ContainedInStructure') \
                 and element.ContainedInStructure \
                 and element.ContainedInStructure[0].RelatingStructure:
-            relating_structure_global_id = element.ContainedInStructure[0].RelatingStructure.GlobalId
+            container = element.ContainedInStructure[0].RelatingStructure
+            if container.is_a('IfcSpace'):
+                if container.GlobalId in self.added_data:
+                    obj.BIMObjectProperties.relating_structure = self.added_data[container.GlobalId]
+                return self.place_object_in_spatial_tree(container, obj)
+            relating_structure_global_id = container.GlobalId
             if relating_structure_global_id in self.spatial_structure_elements:
                 self.spatial_structure_elements[relating_structure_global_id]['blender'].objects.link(obj)
         elif hasattr(element, 'Decomposes') \
@@ -534,11 +632,13 @@ class IfcImporter():
             if element.Decomposes[0].RelatingObject.is_a('IfcProject'):
                 collection = bpy.data.collections.get(f'IfcProject/{element.Decomposes[0].RelatingObject.Name}')
             elif element.Decomposes[0].RelatingObject.is_a('IfcSpatialStructureElement'):
-                collection = bpy.data.collections.get('{}/{}'.format(
-                    element.Decomposes[0].RelatingObject.is_a(),
-                    element.Decomposes[0].RelatingObject.Name))
-            else:
+                global_id = element.Decomposes[0].RelatingObject.GlobalId
+                if global_id in self.spatial_structure_elements:
+                    collection = self.spatial_structure_elements[global_id]['blender']
+            elif self.ifc_import_settings.should_import_aggregates:
                 collection = bpy.data.collections.get(f'IfcRelAggregates/{element.Decomposes[0].id()}')
+            else:
+                return self.place_object_in_spatial_tree(element.Decomposes[0].RelatingObject, obj)
             if collection:
                 collection.objects.link(obj)
         elif hasattr(element, 'HasFillings') \
@@ -682,4 +782,8 @@ class IfcImportSettings:
         self.should_treat_styled_item_as_material = False
         self.should_use_cpu_multiprocessing = False
         self.should_use_legacy = False
+        self.should_merge_by_class = False
+        self.should_merge_by_material = False
+        self.should_import_aggregates = True
+        self.should_clean_mesh = True
         self.diff_file = None

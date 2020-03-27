@@ -131,7 +131,8 @@ class IfcParser():
         self.unit_scale = self.get_unit_scale()
         self.people = self.get_people()
         self.organisations = self.get_organisations()
-        self.categorise_selected_objects(bpy.context.selected_objects)
+        selected_objects = self.add_spatial_elements_if_unselected(bpy.context.selected_objects)
+        self.categorise_selected_objects(selected_objects)
         self.psets = self.get_psets()
         self.material_psets = self.get_material_psets()
         self.documents = self.get_documents()
@@ -141,11 +142,8 @@ class IfcParser():
         self.load_representations()
         self.materials = self.get_materials()
         self.styled_items = self.get_styled_items()
-        self.qtos = self.get_qtos()
         self.spatial_structure_elements = self.get_spatial_structure_elements()
         self.structural_analysis_models = self.get_structural_analysis_models()
-
-        self.collection_name_filter = []
 
         self.project = self.get_project()
         self.libraries = self.get_libraries()
@@ -157,8 +155,7 @@ class IfcParser():
         self.map_conversion = self.get_map_conversion()
         self.target_crs = self.get_target_crs()
         self.library_information = self.get_library_information()
-        self.spatial_structure_elements_tree = self.get_spatial_structure_elements_tree(
-            self.project['raw'].children, self.collection_name_filter)
+        self.spatial_structure_elements_tree = self.get_spatial_structure_elements_tree(self.project)
 
     def get_units(self):
         return {
@@ -397,7 +394,7 @@ class IfcParser():
         product['attributes'].update(attribute_override)
         product.update(metadata_override)
 
-        type_product = obj.BIMObjectProperties.type_product
+        type_product = obj.BIMObjectProperties.relating_type
         if type_product \
                 and self.is_a_type(self.get_ifc_class(type_product.name)):
             reference = self.get_type_product_reference(type_product.name)
@@ -408,8 +405,7 @@ class IfcParser():
             product['boundary_condition_attributes'] = {a.name: a.string_value
                 for a in obj.BIMObjectProperties.boundary_condition.attributes}
 
-        for collection in product['raw'].users_collection:
-            self.parse_product_collection(product, collection)
+        self.get_product_relating_structure(product, obj)
 
         if 'IfcRelNests' in obj.constraints:
             # TODO: I think get_product_index_from_raw_name should not be used
@@ -452,17 +448,8 @@ class IfcParser():
             self.rel_defines_by_pset.setdefault(
                 '{}/{}'.format(pset.name, pset.file), []).append(product)
 
-        for pset in obj.BIMObjectProperties.override_psets:
-            pset_key = '{}/{}'.format(pset.name, obj.name)
-            raw = {p.name: p.string_value for p in pset.properties if p.string_value}
-            if not raw:
-                continue
-            self.psets[pset_key] = {
-                'ifc': None,
-                'raw': raw,
-                'attributes': { 'Name': pset.name }
-            }
-            self.rel_defines_by_pset.setdefault(pset_key, []).append(product)
+        self.get_product_psets_qtos(product, obj, is_pset=True)
+        self.get_product_psets_qtos(product, obj, is_qto=True)
 
         for document in obj.BIMObjectProperties.documents:
             self.rel_associates_document_object.setdefault(
@@ -494,6 +481,37 @@ class IfcParser():
 
         return product
 
+    def get_product_psets_qtos(self, product, obj, is_pset=False, is_qto=False):
+        if is_pset:
+            psets_qtos = obj.BIMObjectProperties.override_psets
+            results = self.psets
+            relationships = self.rel_defines_by_pset
+        if is_qto:
+            psets_qtos = obj.BIMObjectProperties.qtos
+            results = self.qtos
+            relationships = self.rel_defines_by_qto
+        for item in psets_qtos:
+            item_key = '{}/{}'.format(item.name, obj.name)
+            raw = {p.name: p.string_value for p in item.properties if p.string_value}
+            if not raw:
+                continue
+            results[item_key] = {
+                'ifc': None,
+                'raw': raw,
+                'attributes': { 'Name': item.name }
+            }
+            relationships.setdefault(item_key, []).append(product)
+
+    def get_product_relating_structure(self, product, obj):
+        relating_structure = obj.BIMObjectProperties.relating_structure
+        if relating_structure:
+            reference = self.get_spatial_structure_element_reference(relating_structure.name)
+            self.rel_contained_in_spatial_structure.setdefault(reference, []).append(self.product_index)
+            product['relating_structure'] = reference
+            return
+        for collection in product['raw'].users_collection:
+            self.parse_product_collection(product, collection)
+
     def parse_product_collection(self, product, collection):
         if collection is None:
             return
@@ -502,7 +520,6 @@ class IfcParser():
             reference = self.get_spatial_structure_element_reference(collection.name)
             self.rel_contained_in_spatial_structure.setdefault(reference, []).append(self.product_index)
             product['relating_structure'] = reference
-            self.collection_name_filter.append(collection.name)
         elif self.is_a_structural_analysis_model(class_name):
             reference = self.get_structural_analysis_model_reference(collection.name)
             self.rel_assigns_to_group.setdefault(reference, []).append(self.product_index)
@@ -517,21 +534,46 @@ class IfcParser():
                 if child.name == child_collection.name:
                     return parent_collection
 
+    def add_spatial_elements_if_unselected(self, selected_objects):
+        results = []
+        base_collections = []
+        added_objs = []
+        for obj in selected_objects:
+            results.append(obj)
+            for collection in obj.users_collection:
+                base_collections.append(collection)
+        base_collections = list(set(base_collections))
+        for collection in base_collections:
+            spatial_obj = bpy.data.objects.get(collection.name)
+            if not spatial_obj or spatial_obj in added_objs:
+                break
+            added_objs.append(spatial_obj)
+            parent_collection = self.get_parent_collection(collection)
+            while parent_collection:
+                spatial_obj = bpy.data.objects.get(parent_collection.name)
+                if not spatial_obj or spatial_obj in added_objs:
+                    break
+                added_objs.append(spatial_obj)
+                parent_collection = self.get_parent_collection(parent_collection)
+        results.extend(added_objs)
+        return results
+
     def categorise_selected_objects(self, objects_to_sort, metadata=None):
         if not metadata:
             metadata = {}
         for obj in objects_to_sort:
             if obj.name[0:3] != 'Ifc':
                 continue
-            elif obj.users_collection and obj.users_collection[0].name == obj.name:
+            elif self.is_a_spatial_structure_element(self.get_ifc_class(obj.name)):
                 self.selected_spatial_structure_elements.append({'raw': obj, 'metadata': metadata})
-            elif not self.is_a_library(self.get_ifc_class(obj.users_collection[0].name)):
-                self.selected_products.append({'raw': obj, 'metadata': metadata})
             elif obj.instance_type == 'COLLECTION':
                 self.categorise_selected_objects(
                     obj.instance_collection.objects,
                     {'rel_aggregates_relating_object': obj}
                 )
+                self.selected_products.append({'raw': obj, 'metadata': metadata})
+            elif not self.is_a_library(self.get_ifc_class(obj.users_collection[0].name)):
+                self.selected_products.append({'raw': obj, 'metadata': metadata})
 
     def get_psets(self):
         psets = {}
@@ -724,19 +766,16 @@ class IfcParser():
 
     def get_spatial_structure_elements(self):
         elements = []
-        for collection in bpy.data.collections:
-            if self.is_a_spatial_structure_element(self.get_ifc_class(collection.name)):
-                raw = bpy.data.objects.get(collection.name)
-                if not raw:
-                    raw = collection
-                element = {
-                    'ifc': None,
-                    'raw': raw,
-                    'class': self.get_ifc_class(raw.name),
-                    'attributes': self.get_object_attributes(raw)
-                }
-                self.append_product_attributes(element, raw)
-                elements.append(element)
+        for selected_element in self.selected_spatial_structure_elements:
+            obj = selected_element['raw']
+            element = {
+                'ifc': None,
+                'raw': obj,
+                'class': self.get_ifc_class(obj.name),
+                'attributes': self.get_object_attributes(obj)
+            }
+            self.append_product_attributes(element, obj)
+            elements.append(element)
         return elements
 
     def get_structural_analysis_models(self):
@@ -915,28 +954,6 @@ class IfcParser():
                 })
         return results
 
-    def get_qtos(self):
-        if not self.ifc_export_settings.has_quantities:
-            return {}
-        results = {}
-        for product in self.selected_products + self.type_products:
-            obj = product['raw']
-            if not obj.data:
-                continue
-            for property in obj.keys():
-                if property[0:4] != 'Qto_':
-                    continue
-                results[obj.name] = {
-                    'ifc': None,
-                    'raw': obj,
-                    'class': property,
-                    'attributes': {
-                        'Name': property,
-                        'MethodOfMeasurement': obj[property]
-                    }
-                }
-        return results
-
     def get_type_products(self):
         results = []
         index = 0
@@ -997,22 +1014,29 @@ class IfcParser():
                         names.append(mesh_name)
         return names
 
-    def get_spatial_structure_elements_tree(self, collections, name_filter):
-        collection_tree = []
-
-        for collection in collections:
-            if not self.is_a_spatial_structure_element(self.get_ifc_class(collection.name)):
-                continue
-            children = self.get_spatial_structure_elements_tree(
-                collection.children, name_filter)
-            if collection.name in name_filter \
-                    or children:
-                collection_tree.append({
-                    'reference': self.get_spatial_structure_element_reference(collection.name),
-                    'children': children
+    def get_spatial_structure_elements_tree(self, parent):
+        children = []
+        if parent['raw'].name not in bpy.data.collections:
+            return children
+        for reference, element in enumerate(self.spatial_structure_elements):
+            if ( \
+                    # A convention is established that spatial elements may be
+                    # an object placed in a collection of the same name
+                        element['raw'].name == element['raw'].users_collection[0].name \
+                        and element['raw'].users_collection[0].name in [c.name \
+                            for c in bpy.data.collections[parent['raw'].name].children] \
+                    ) or ( \
+                    # We allow finer grain spatial elements such as IfcSpace to
+                    # break the convention to prevent collection overload in Blender
+                        element['raw'].name != element['raw'].users_collection[0].name \
+                        and element['raw'].users_collection[0].name in [o.name \
+                            for o in bpy.data.collections[parent['raw'].name].objects] \
+                    ):
+                children.append({
+                    'reference': reference,
+                    'children': self.get_spatial_structure_elements_tree(element)
                 })
-
-        return collection_tree
+        return children
 
     def get_spatial_structure_element_reference(self, name):
         return ['{}/{}'.format(e['class'], e['attributes']['Name'])
@@ -1037,12 +1061,14 @@ class IfcParser():
                 'Name "{}" does not follow the format of "IfcClass/Name"'.format(name))
 
     def is_a_spatial_structure_element(self, class_name):
-        # We assume that any collection we can't identify is a spatial structure
-        return class_name[0:3] == 'Ifc' \
-               and not self.is_a_project(class_name) \
-               and not self.is_a_library(class_name) \
-               and not self.is_a_rel_aggregates(class_name) \
-               and not self.is_a_structural_analysis_model(class_name)
+        return class_name in [
+            'IfcBuilding',
+            'IfcBuildingStorey',
+            'IfcExternalSpatialElement',
+            'IfcSite',
+            'IfcSpace',
+            'IfcSpatialZone'
+            ]
 
     def is_a_rel_aggregates(self, class_name):
         return class_name == 'IfcRelAggregates'
@@ -1304,10 +1330,6 @@ class IfcExporter():
         for pset in self.ifc_parser.psets.values():
             properties = self.create_pset_properties(pset)
             if not properties:
-                self.ifc_export_settings.logger.error(
-                    'No properties could be detected for the pset {}/{}'.format(
-                        pset['attributes']['Name'],
-                        pset['attributes']['Description']))
                 continue
             pset['attributes'].update({
                 'GlobalId': ifcopenshell.guid.new(),
@@ -1325,6 +1347,10 @@ class IfcExporter():
                     'Properties': self.create_pset_properties(properties),
                     'Material': material['ifc']
                 })
+
+    def create_qto_properties(self, qto):
+        if qto['attributes']['Name'] in schema.ifc.qtos:
+            return self.create_templated_qto_properties(qto)
 
     def create_pset_properties(self, pset):
         if pset['attributes']['Name'] in schema.ifc.psets:
@@ -1368,6 +1394,30 @@ class IfcExporter():
                     pset['attributes']['Name'],
                     pset['attributes']['Description'],
                     invalid_pset_keys))
+        return properties
+
+    def create_templated_qto_properties(self, qto):
+        properties = []
+        templates = schema.ifc.qtos[qto['attributes']['Name']]['HasPropertyTemplates']
+        for name, data in templates.items():
+            if name not in qto['raw']:
+                continue
+            if data.TemplateType[0:2] == 'Q_':
+                value_basename = data.TemplateType[2:].title()
+                value_name = f'{value_basename}Value'
+                class_name = f'IfcQuantity{value_basename}'
+                properties.append(
+                    self.file.create_entity(class_name, **{
+                        'Name': name,
+                        value_name: float(qto['raw'][name])
+                    }))
+        invalid_qto_keys = [k for k in qto['raw'].keys() if k not in templates.keys()]
+        if invalid_qto_keys:
+            self.ifc_export_settings.logger.error(
+                'One or more properties were invalid in the qto {}/{}: {}'.format(
+                    qto['attributes']['Name'],
+                    qto['attributes']['Description'],
+                    invalid_qto_keys))
         return properties
 
     def cast_to_base_type(self, var_type, value):
@@ -1549,14 +1599,17 @@ class IfcExporter():
         for styled_item in self.ifc_parser.styled_items:
             product = self.ifc_parser.products[
                 self.ifc_parser.get_product_index_from_raw_name(
-                    styled_item['related_product_name'])]['ifc']
-            representation_items = []
-            if product.Representation:
-                for representation in product.Representation.Representations:
-                    for item in representation.Items:
-                        representation_items.append(item)
-            for representation_item in representation_items:
-                styled_item['ifc'] = self.create_styled_item(styled_item, representation_item)
+                    styled_item['related_product_name'])]
+            material_slots = {}
+            if product['ifc'].Representation:
+                for representation in product['ifc'].Representation.Representations:
+                    for mapped_item in representation.Items:
+                        items = mapped_item[0].MappedRepresentation.Items
+                        for i, item in enumerate(items):
+                            material_slots[product['raw'].material_slots[i].name] = item
+            for styled_item_name, representation_item in material_slots.items():
+                if styled_item_name == styled_item['attributes']['Name']:
+                    styled_item['ifc'] = self.create_styled_item(styled_item, representation_item)
 
     def create_styled_item(self, item, representation_item=None):
         styles = []
@@ -1661,12 +1714,15 @@ class IfcExporter():
             self.create_product(product)
 
     def create_qtos(self):
-        for object_name, qto in self.ifc_parser.qtos.items():
-            quantities = self.calculate_quantities(qto['class'], qto['raw'])
+        # TODO: re-introduce calculated quantities
+        for qto in self.ifc_parser.qtos.values():
+            properties = self.create_qto_properties(qto)
+            if not properties:
+                continue
             qto['attributes'].update({
                 'GlobalId': ifcopenshell.guid.new(),
                 'OwnerHistory': self.owner_history,
-                'Quantities': quantities
+                'Quantities': properties
             })
             qto['ifc'] = self.file.create_entity('IfcElementQuantity', **qto['attributes'])
 
@@ -1821,7 +1877,6 @@ class IfcExporter():
     def create_representation(self, representation):
         self.ifc_vertices = []
         self.ifc_edges = []
-        self.ifc_faces = []
         if representation['is_generated'] \
                 and representation['subcontext'] == 'Box':
             return self.file.createIfcRepresentationMap(self.origin,
@@ -2174,16 +2229,21 @@ class IfcExporter():
         if not representation['is_parametric']:
             mesh = representation['raw_object'].evaluated_get(bpy.context.evaluated_depsgraph_get()).to_mesh()
         self.create_vertices(mesh.vertices)
+        ifc_faces = [None] * len(representation['raw_object'].material_slots)
+        for i, value in enumerate(ifc_faces):
+            ifc_faces[i] = []
+        if not ifc_faces:
+            ifc_faces = [[]]
         for polygon in mesh.polygons:
-            self.ifc_faces.append(self.file.createIfcFace([
+            ifc_faces[polygon.material_index].append(self.file.createIfcFace([
                 self.file.createIfcFaceOuterBound(
                     self.file.createIfcPolyLoop([self.ifc_vertices[vertice] for vertice in polygon.vertices]),
                     True)]))
+        items = [self.file.createIfcFacetedBrep(self.file.createIfcClosedShell(f)) for f in ifc_faces]
         return self.file.createIfcShapeRepresentation(
             self.ifc_rep_context[representation['context']][representation['subcontext']][
                 representation['target_view']]['ifc'],
-            representation['subcontext'], 'Brep',
-            [self.file.createIfcFacetedBrep(self.file.createIfcClosedShell(self.ifc_faces))])
+            representation['subcontext'], 'Brep', items)
 
     def create_vertices(self, vertices):
         self.ifc_vertices.extend(

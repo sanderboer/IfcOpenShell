@@ -4,6 +4,7 @@ import csv
 from pathlib import Path
 from . import export_ifc
 from . import schema
+from . import bcf
 import bpy
 from bpy.types import PropertyGroup
 from bpy.app.handlers import persistent
@@ -41,6 +42,8 @@ target_views_enum = []
 persons_enum = []
 organisations_enum = []
 views_enum = []
+sheets_enum = []
+bcfviewpoints_enum = []
 
 @persistent
 def setDefaultProperties(scene):
@@ -116,7 +119,7 @@ def getIfcProducts(self, context):
     global products_enum
     if len(products_enum) < 1:
         products_enum.extend([(e, e, '') for e in
-            ['IfcElement', 'IfcElementType', 'IfcSpatialStructureElement', 'IfcStructural']])
+            ['IfcElement', 'IfcElementType', 'IfcSpatialElement', 'IfcStructural']])
     return products_enum
 
 
@@ -342,6 +345,22 @@ def getViews(self, context):
     return views_enum
 
 
+def refreshSheets(self, context):
+    global sheets_enum
+    sheets_enum.clear()
+    getSheets(self, context)
+
+
+def getSheets(self, context):
+    global sheets_enum
+    if len(sheets_enum) < 1:
+        sheets_enum.clear()
+        for filename in Path(os.path.join(context.scene.BIMProperties.data_dir, 'sheets')).glob('*.svg'):
+            f = str(filename.stem)
+            sheets_enum.append((f, f, ''))
+    return sheets_enum
+
+
 class Subcontext(PropertyGroup):
     name: StringProperty(name='Name')
     target_view: StringProperty(name='Target View')
@@ -351,11 +370,138 @@ class DocProperties(PropertyGroup):
     should_recut: BoolProperty(name="Should Recut", default=True)
     view_name: StringProperty(name="View Name")
     available_views: EnumProperty(items=getViews, name="Available Views")
+    sheet_name: StringProperty(name="Sheet Name", update=refreshSheets)
+    available_sheets: EnumProperty(items=getSheets, name="Available Sheets")
 
 
 class BIMCameraProperties(PropertyGroup):
     view_name: StringProperty(name="View Name")
     diagram_scale: EnumProperty(items=getDiagramScales, name='Diagram Scale')
+    is_nts: BoolProperty(name='Is NTS')
+
+
+class BcfTopic(PropertyGroup):
+    name: StringProperty(name='Name')
+
+
+class BcfTopicLabel(PropertyGroup):
+    name: StringProperty(name='Name')
+
+
+class BcfTopicLink(PropertyGroup):
+    name: StringProperty(name='Name')
+
+
+class BcfTopicDocumentReference(PropertyGroup):
+    name: StringProperty(name='Reference')
+    description: StringProperty(name='Description')
+    guid: StringProperty(name='GUID')
+    is_external: BoolProperty(name='Is External')
+
+
+class BcfTopicRelatedTopic(PropertyGroup):
+    name: StringProperty(name='Name')
+    guid: StringProperty(name='GUID')
+
+
+def refreshBcfTopic(self, context):
+    global bcfviewpoints_enum
+    import bcfplugin
+
+    props = bpy.context.scene.BCFProperties
+    topic = bcf.BcfStore.topics[props.active_topic_index][1]
+
+    props.topic_guid = str(topic.xmlId)
+
+    # Load metadata
+    props.topic_type = topic.type
+    props.topic_status = topic.status
+    props.topic_priority = topic.priority
+    props.topic_stage = topic.stage
+    if topic.date:
+        props.topic_creation_date = topic.date.strftime('%a %Y-%m-%d %H:%S')
+    else:
+        props.topic_creation_date = ''
+    props.topic_creation_author = topic.author
+    if topic.modDate:
+        props.topic_modified_date = topic.modDate.strftime('%a %Y-%m-%d %H:%S')
+    else:
+        props.topic_modified_date = ''
+    props.topic_modified_author = topic.modAuthor
+    props.topic_assigned_to = topic.assignee
+    if topic.dueDate:
+        props.topic_due_date = topic.dueDate.strftime('%a %Y-%m-%d %H:%S')
+    else:
+        props.topic_due_date = ''
+    props.topic_description = topic.description
+
+    while len(props.topic_labels) > 0:
+        props.topic_labels.remove(0)
+    for label in topic.labels:
+        new = props.topic_labels.add()
+        new.name = label.value
+
+    while len(props.topic_links) > 0:
+        props.topic_links.remove(0)
+    for link in topic.referenceLinks:
+        new = props.topic_links.add()
+        new.name = link.value
+
+    # Load snippet
+    props.topic_has_snippet = bool(topic.bimSnippet)
+    if topic.bimSnippet:
+        props.topic_snippet_reference = topic.bimSnippet.reference.uri
+        if topic.bimSnippet.schema.uri:
+            props.topic_snippet_schema = topic.bimSnippet.schema.uri
+        props.topic_snippet_type = topic.bimSnippet.type
+        if topic.bimSnippet.external:
+            props.topic_snippet_is_external = topic.bimSnippet.external
+        else:
+            props.topic_snippet_is_external = False
+
+    # Load document references
+    while len(props.topic_document_references) > 0:
+        props.topic_document_references.remove(0)
+    for doc in topic.docRefs:
+        new = props.topic_document_references.add()
+        new.name = doc.reference.uri
+        new.description = doc.description
+        new.guid = str(doc.guid)
+        new.is_external = doc.external
+
+    # Load related topics
+    while len(props.topic_related_topics) > 0:
+        props.topic_related_topics.remove(0)
+    for t in topic.relatedTopics:
+        new = props.topic_related_topics.add()
+        new.name = bcfplugin.getTopicFromUUID(t.value).title
+        new.guid = str(t.value)
+
+    # Load viewpoints
+    bcfviewpoints_enum.clear()
+    viewpoints = bcfplugin.getViewpoints(topic)
+    for i, viewpoint in enumerate(viewpoints):
+        bcfviewpoints_enum.append((str(i), 'View {}'.format(i+1), ''))
+
+    # Load comments
+    bcf.BcfStore.comments = bcfplugin.getComments(topic)
+    comments = bpy.data.texts.get('BCF Comments')
+    if comments:
+        comments.clear()
+    else:
+        comments = bpy.data.texts.new('BCF Comments')
+    for i, comment in enumerate(bcf.BcfStore.comments):
+        comments.write('# Comment {} - {}\n'.format(i + 1, comment[1].xmlId))
+        comments.write('# From: {} on {}\n'.format(comment[1].author, comment[1].date))
+        if comment[1].modDate:
+            comments.write('# Modified by {} on {}\n'.format(comment[1].modAuthor, comment[1].modDate))
+        comments.write(comment[1].comment)
+        comments.write('\n\n-----\n\n')
+
+
+def getBcfViewpoints(self, context):
+    global bcfviewpoints_enum
+    return bcfviewpoints_enum
 
 
 class BIMProperties(PropertyGroup):
@@ -382,6 +528,10 @@ class BIMProperties(PropertyGroup):
     import_should_treat_styled_item_as_material: BoolProperty(name="Import Treating Styled Item as Material", default=False)
     import_should_use_legacy: BoolProperty(name="Import with Legacy Importer", default=False)
     import_should_use_cpu_multiprocessing: BoolProperty(name="Import with CPU Multiprocessing", default=False)
+    import_should_import_aggregates: BoolProperty(name="Import Aggregates", default=True)
+    import_should_merge_by_class: BoolProperty(name="Import and Merge by Class", default=False)
+    import_should_merge_by_material: BoolProperty(name="Import and Merge by Material", default=False)
+    import_should_clean_mesh: BoolProperty(name="Import and Clean Mesh", default=True)
     qa_reject_element_reason: StringProperty(name="Element Rejection Reason")
     person: EnumProperty(items=getPersons, name="Person")
     organisation: EnumProperty(items=getOrganisations, name="Organisation")
@@ -414,6 +564,34 @@ class BIMProperties(PropertyGroup):
     available_contexts: EnumProperty(items=[('Model', 'Model', ''), ('Plan', 'Plan', '')], name="Available Contexts")
     available_subcontexts: EnumProperty(items=getSubcontexts, name="Available Subcontexts")
     available_target_views: EnumProperty(items=getTargetViews, name="Available Target Views")
+
+
+class BCFProperties(PropertyGroup):
+    bcf_file: StringProperty(default='', name='BCF File')
+    topics: CollectionProperty(name='BCF Topics', type=BcfTopic)
+    active_topic_index: IntProperty(name='Active BCF Topic Index', update=refreshBcfTopic)
+    viewpoints: EnumProperty(items=getBcfViewpoints, name='BCF Viewpoints')
+    topic_guid: StringProperty(default='', name='Topic GUID')
+    topic_type: StringProperty(default='', name='Topic Type')
+    topic_status: StringProperty(default='', name='Topic Status')
+    topic_priority: StringProperty(default='', name='Topic Priority')
+    topic_stage: StringProperty(default='', name='Topic Stage')
+    topic_creation_date: StringProperty(default='', name='Topic Date')
+    topic_creation_author: StringProperty(default='', name='Topic Author')
+    topic_modified_date: StringProperty(default='', name='Topic Modified Date')
+    topic_modified_author: StringProperty(default='', name='Topic Modified By')
+    topic_assigned_to: StringProperty(default='', name='Topic Assigned To')
+    topic_due_date: StringProperty(default='', name='Topic Due Date')
+    topic_description: StringProperty(default='', name='Topic Description')
+    topic_labels: CollectionProperty(name='BCF Topic Labels', type=BcfTopicLabel)
+    topic_links: CollectionProperty(name='BCF Topic Links', type=BcfTopicLink)
+    topic_has_snippet: BoolProperty(name='BCF Topic Has Snippet', default=False)
+    topic_snippet_reference: StringProperty(name='BIM Snippet Reference')
+    topic_snippet_schema: StringProperty(name='BIM Snippet Schema')
+    topic_snippet_type: StringProperty(name='BIM Snippet Type')
+    topic_snippet_is_external: BoolProperty(name='Is BIM Snippet External')
+    topic_document_references: CollectionProperty(name='BCF Topic Document References', type=BcfTopicDocumentReference)
+    topic_related_topics: CollectionProperty(name='BCF Topic Related Topics', type=BcfTopicRelatedTopic)
 
 
 class MapConversion(PropertyGroup):
@@ -450,7 +628,7 @@ class Attribute(PropertyGroup):
     int_value: IntProperty(name="Value")
     float_value: FloatProperty(name="Value")
 
-class Pset(PropertyGroup):
+class PsetQto(PropertyGroup):
     name: StringProperty(name="Name")
     file: StringProperty(name="File")
     properties: CollectionProperty(name="Properties", type=Attribute)
@@ -475,15 +653,18 @@ class BoundaryCondition(PropertyGroup):
 class BIMObjectProperties(PropertyGroup):
     global_ids: CollectionProperty(name="GlobalIds", type=GlobalId)
     attributes: CollectionProperty(name="Attributes", type=Attribute)
-    type_product: PointerProperty(name='Type Product', type=bpy.types.Object)
-    psets: CollectionProperty(name="Psets", type=Pset)
+    relating_type: PointerProperty(name='Type Product', type=bpy.types.Object)
+    relating_structure: PointerProperty(name='Spatial Container', type=bpy.types.Object)
+    psets: CollectionProperty(name="Psets", type=PsetQto)
+    qtos: CollectionProperty(name="Qtos", type=PsetQto)
     applicable_attributes: EnumProperty(items=getApplicableAttributes, name="Attribute Names")
     documents: CollectionProperty(name="Documents", type=Document)
     applicable_documents: EnumProperty(items=getApplicableDocuments, name="Available Documents")
     classifications: CollectionProperty(name="Classifications", type=Classification)
     material_type: EnumProperty(items=getMaterialTypes, name="Material Type")
-    override_psets: CollectionProperty(name="Override Psets", type=Pset)
+    override_psets: CollectionProperty(name="Override Psets", type=PsetQto)
     override_pset_name: StringProperty(name="Override Pset Name")
+    qto_name: StringProperty(name="Qto Name")
     has_boundary_condition: BoolProperty(name='Has Boundary Condition')
     boundary_condition: PointerProperty(name='Boundary Condition', type=BoundaryCondition)
     structural_member_connection: PointerProperty(name='Structural Member Connection', type=bpy.types.Object)
@@ -495,7 +676,7 @@ class BIMMaterialProperties(PropertyGroup):
     identification: StringProperty(name="Identification")
     name: StringProperty(name="Name")
     available_material_psets: EnumProperty(items=getAvailableMaterialPsets, name="Material Pset")
-    psets: CollectionProperty(name="Psets", type=Pset)
+    psets: CollectionProperty(name="Psets", type=PsetQto)
     attributes: CollectionProperty(name="Attributes", type=Attribute)
     applicable_attributes: EnumProperty(items=getApplicableMaterialAttributes, name="Attribute Names")
     profile_def: EnumProperty(items=getProfileDef, name='Parameterized Profile Def', update=refreshProfileAttributes)

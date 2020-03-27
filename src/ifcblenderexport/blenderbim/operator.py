@@ -3,15 +3,18 @@ import bpy
 import time
 import json
 import logging
+import webbrowser
 import ifcopenshell
 from . import export_ifc
 from . import import_ifc
 from . import cut_ifc
 from . import sheeter
 from . import schema
+from . import bcf
 from bpy_extras.io_utils import ImportHelper
 from itertools import cycle
-from mathutils import Vector
+from mathutils import Vector, Matrix
+from math import radians
 from pathlib import Path
 
 colour_list = [
@@ -101,6 +104,10 @@ class ImportIFC(bpy.types.Operator, ImportHelper):
         ifc_import_settings.should_treat_styled_item_as_material = bpy.context.scene.BIMProperties.import_should_treat_styled_item_as_material
         ifc_import_settings.should_use_cpu_multiprocessing = bpy.context.scene.BIMProperties.import_should_use_cpu_multiprocessing
         ifc_import_settings.should_use_legacy = bpy.context.scene.BIMProperties.import_should_use_legacy
+        ifc_import_settings.should_import_aggregates = bpy.context.scene.BIMProperties.import_should_import_aggregates
+        ifc_import_settings.should_merge_by_class = bpy.context.scene.BIMProperties.import_should_merge_by_class
+        ifc_import_settings.should_merge_by_material = bpy.context.scene.BIMProperties.import_should_merge_by_material
+        ifc_import_settings.should_clean_mesh = bpy.context.scene.BIMProperties.import_should_clean_mesh
         ifc_importer = import_ifc.IfcImporter(ifc_import_settings)
         ifc_importer.execute()
         ifc_import_settings.logger.info('Import finished in {:.2f} seconds'.format(time.time() - start))
@@ -381,6 +388,133 @@ class RejectElement(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GetBcfTopics(bpy.types.Operator):
+    bl_idname = 'bim.get_bcf_topics'
+    bl_label = 'Get BCF Topics'
+
+    def execute(self, context):
+        import bcfplugin
+        bcfplugin.openProject(bpy.context.scene.BCFProperties.bcf_file)
+        bcf.BcfStore.topics = bcfplugin.getTopics()
+        while len(bpy.context.scene.BCFProperties.topics) > 0:
+            bpy.context.scene.BCFProperties.topics.remove(0)
+        for topic in bcf.BcfStore.topics:
+            new = bpy.context.scene.BCFProperties.topics.add()
+            new.name = topic[0]
+        return {'FINISHED'}
+
+
+class ViewBcfTopic(bpy.types.Operator):
+    bl_idname = 'bim.view_bcf_topic'
+    bl_label = 'Get BCF Topic'
+    topic_guid: bpy.props.StringProperty()
+
+    def execute(self, context):
+        for index, topic in enumerate(bcf.BcfStore.topics):
+            if str(topic[1].xmlId) == self.topic_guid:
+                bpy.context.scene.BCFProperties.active_topic_index = index
+        return {'FINISHED'}
+
+
+class ActivateBcfViewpoint(bpy.types.Operator):
+    bl_idname = 'bim.activate_bcf_viewpoint'
+    bl_label = 'Activate BCF Viewpoint'
+
+    def execute(self, context):
+        import bcfplugin
+
+        topics = bcf.BcfStore.topics
+        if not topics:
+            return {'FINISHED'}
+        topic = topics[bpy.context.scene.BCFProperties.active_topic_index][1]
+        viewpoints = bcfplugin.getViewpoints(topic)
+        if not viewpoints:
+            return {'FINISHED'}
+        viewpoint = viewpoints[int(bpy.context.scene.BCFProperties.viewpoints)][1]
+
+        obj = bpy.data.objects.get('Viewpoint')
+        if not obj:
+            obj = bpy.data.objects.new('Viewpoint', bpy.data.cameras.new('Viewpoint'))
+            bpy.context.scene.collection.objects.link(obj)
+            bpy.context.scene.camera = obj
+        area = next(area for area in bpy.context.screen.areas if area.type == 'VIEW_3D')
+        area.spaces[0].region_3d.view_perspective = 'CAMERA'
+
+        if viewpoint.oCamera:
+            camera = viewpoint.oCamera
+            obj.data.type = 'ORTHO'
+        elif viewpoint.pCamera:
+            camera = viewpoint.pCamera
+            obj.data.type = 'PERSP'
+            obj.data.angle = radians(camera.fieldOfView)
+
+        z_axis = Vector((-camera.direction.x, -camera.direction.y, -camera.direction.z)).normalized()
+        y_axis = Vector((camera.upVector.x, camera.upVector.y, camera.upVector.z)).normalized()
+        x_axis = y_axis.cross(z_axis).normalized()
+        rotation = Matrix((x_axis, y_axis, z_axis))
+        rotation.invert()
+        location = Vector((camera.viewPoint.x, camera.viewPoint.y, camera.viewPoint.z))
+        obj.matrix_world = rotation.to_4x4()
+        obj.location = location
+        return {'FINISHED'}
+
+
+class OpenBcfReferenceLink(bpy.types.Operator):
+    bl_idname = 'bim.open_bcf_reference_link'
+    bl_label = 'Open BCF Reference Link'
+    index: bpy.props.IntProperty()
+
+    def execute(self, context):
+        webbrowser.open(bpy.context.scene.BCFProperties.topic_links[self.index].name)
+        return {'FINISHED'}
+
+
+class OpenBcfBimSnippetSchema(bpy.types.Operator):
+    bl_idname = 'bim.open_bcf_bim_snippet_schema'
+    bl_label = 'Open BCF BIM Snippet Schema'
+
+    def execute(self, context):
+        webbrowser.open(bpy.context.scene.BCFProperties.topic_snippet_schema)
+        return {'FINISHED'}
+
+
+class OpenBcfBimSnippetReference(bpy.types.Operator):
+    bl_idname = 'bim.open_bcf_bim_snippet_reference'
+    bl_label = 'Open BCF BIM Snippet Reference'
+    topic_guid: bpy.props.StringProperty()
+
+    def execute(self, context):
+        import bcfplugin
+        if bpy.context.scene.BCFProperties.topic_snippet_is_external:
+            webbrowser.open(bpy.context.scene.BCFProperties.topic_snippet_reference)
+            return {'FINISHED'}
+        webbrowser.open('file:///' + os.path.join(
+            bcfplugin.util.getBcfDir(),
+            self.topic_guid,
+            bpy.context.scene.BCFProperties.topic_snippet_reference
+            ))
+        return {'FINISHED'}
+
+
+class OpenBcfDocumentReference(bpy.types.Operator):
+    bl_idname = 'bim.open_bcf_document_reference'
+    bl_label = 'Open BCF Document Reference'
+    data: bpy.props.StringProperty()
+
+    def execute(self, context):
+        import bcfplugin
+        topic_guid, index = self.data.split('/')
+        doc = bpy.context.scene.BCFProperties.topic_document_references[int(index)]
+        uri = doc.name
+        if doc.is_external:
+            webbrowser.open(uri)
+            return {'FINISHED'}
+        webbrowser.open('file:///' + os.path.join(
+            bcfplugin.util.getBcfDir(),
+            topic_guid, uri))
+        return {'FINISHED'}
+
+
 class SelectAudited(bpy.types.Operator):
     bl_idname = 'bim.select_audited'
     bl_label = 'Select Audited'
@@ -476,6 +610,22 @@ class RemovePset(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class AddQto(bpy.types.Operator):
+    bl_idname = 'bim.add_qto'
+    bl_label = 'Add Qto'
+
+    def execute(self, context):
+        name = bpy.context.active_object.BIMObjectProperties.qto_name
+        if name not in schema.ifc.qtos:
+            return {'FINISHED'}
+        qto = bpy.context.active_object.BIMObjectProperties.qtos.add()
+        qto.name = name
+        for prop_name in schema.ifc.qtos[name]['HasPropertyTemplates'].keys():
+            prop = qto.properties.add()
+            prop.name = prop_name
+        return {'FINISHED'}
+
+
 class AddOverridePset(bpy.types.Operator):
     bl_idname = 'bim.add_override_pset'
     bl_label = 'Add Override Pset'
@@ -499,6 +649,16 @@ class RemoveOverridePset(bpy.types.Operator):
 
     def execute(self, context):
         bpy.context.active_object.BIMObjectProperties.override_psets.remove(self.pset_index)
+        return {'FINISHED'}
+
+
+class RemoveQto(bpy.types.Operator):
+    bl_idname = 'bim.remove_qto'
+    bl_label = 'Remove Qto'
+    index: bpy.props.IntProperty()
+
+    def execute(self, context):
+        bpy.context.active_object.BIMObjectProperties.qtos.remove(self.index)
         return {'FINISHED'}
 
 
@@ -789,6 +949,20 @@ class ExecuteIfcDiff(bpy.types.Operator):
         ifc_diff.diff()
         ifc_diff.export()
         return {'FINISHED'}
+
+
+class SelectBcfFile(bpy.types.Operator):
+    bl_idname = "bim.select_bcf_file"
+    bl_label = "Select BCF File"
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+
+    def execute(self, context):
+        bpy.context.scene.BCFProperties.bcf_file = self.filepath
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
 
 
 class SelectFeaturesDir(bpy.types.Operator):
@@ -1086,6 +1260,17 @@ class CreateView(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class OpenView(bpy.types.Operator):
+    bl_idname = 'bim.open_view'
+    bl_label = 'Open View'
+
+    def execute(self, context):
+        webbrowser.open('file:///' + os.path.join(
+            bpy.context.scene.BIMProperties.data_dir, 'diagrams',
+            bpy.context.scene.DocProperties.available_views + '.svg'))
+        return {'FINISHED'}
+
+
 class CutSection(bpy.types.Operator):
     bl_idname = 'bim.cut_section'
     bl_label = 'Cut Section'
@@ -1164,6 +1349,10 @@ class CutSection(bpy.types.Operator):
         ifc_cutter.should_recut = bpy.context.scene.DocProperties.should_recut
         svg_writer = cut_ifc.SvgWriter(ifc_cutter)
         numerator, denominator = camera.data.BIMCameraProperties.diagram_scale.split(':')
+        if camera.data.BIMCameraProperties.is_nts:
+            svg_writer.human_scale = 'NTS'
+        else:
+            svg_writer.human_scale = camera.data.BIMCameraProperties.diagram_scale
         svg_writer.scale = float(numerator) / float(denominator)
         ifc_cutter.cut()
         svg_writer.write()
@@ -1172,6 +1361,54 @@ class CutSection(bpy.types.Operator):
     def is_landscape(self):
         return bpy.context.scene.render.resolution_x > bpy.context.scene.render.resolution_y
 
+
+class CreateSheet(bpy.types.Operator):
+    bl_idname = 'bim.create_sheet'
+    bl_label = 'Create Sheet'
+
+    def execute(self, context):
+        sheet_builder = sheeter.SheetBuilder()
+        sheet_builder.data_dir = bpy.context.scene.BIMProperties.data_dir
+        sheet_builder.create(bpy.context.scene.DocProperties.sheet_name)
+        bpy.context.scene.DocProperties.sheet_name = ''
+        return {'FINISHED'}
+
+
+class OpenSheet(bpy.types.Operator):
+    bl_idname = 'bim.open_sheet'
+    bl_label = 'Open Sheet'
+
+    def execute(self, context):
+        webbrowser.open('file:///' + os.path.join(
+            bpy.context.scene.BIMProperties.data_dir, 'sheets',
+            bpy.context.scene.DocProperties.available_sheets + '.svg'))
+        return {'FINISHED'}
+
+
+class OpenCompiledSheet(bpy.types.Operator):
+    bl_idname = 'bim.open_compiled_sheet'
+    bl_label = 'Open Compiled Sheet'
+
+    def execute(self, context):
+        webbrowser.open('file:///' + os.path.join(
+            bpy.context.scene.BIMProperties.data_dir, 'build',
+            bpy.context.scene.DocProperties.available_sheets,
+            bpy.context.scene.DocProperties.available_sheets + '.svg'))
+        return {'FINISHED'}
+
+
+class AddViewToSheet(bpy.types.Operator):
+    bl_idname = 'bim.add_view_to_sheet'
+    bl_label = 'Add View To Sheet'
+
+    def execute(self, context):
+        props = bpy.context.scene.DocProperties
+        sheet_builder = sheeter.SheetBuilder()
+        sheet_builder.data_dir = bpy.context.scene.BIMProperties.data_dir
+        sheet_builder.add_view(props.available_views, props.available_sheets)
+        return {'FINISHED'}
+
+
 class CreateSheets(bpy.types.Operator):
     bl_idname = 'bim.create_sheets'
     bl_label = 'Create Sheets'
@@ -1179,8 +1416,9 @@ class CreateSheets(bpy.types.Operator):
     def execute(self, context):
         sheet_builder = sheeter.SheetBuilder()
         sheet_builder.data_dir = bpy.context.scene.BIMProperties.data_dir
-        sheet_builder.build()
+        sheet_builder.build(bpy.context.scene.DocProperties.available_sheets)
         return {'FINISHED'}
+
 
 class GenerateDigitalTwin(bpy.types.Operator):
     bl_idname = 'bim.generate_digital_twin'
@@ -1253,4 +1491,59 @@ class SetViewPreset1(bpy.types.Operator):
         bpy.context.scene.display.shading.curvature_ridge_factor = 1
         bpy.context.scene.display.shading.curvature_valley_factor = 1
         bpy.context.scene.view_settings.view_transform = 'Standard'
+        return {'FINISHED'}
+
+
+class OpenUpstream(bpy.types.Operator):
+    bl_idname = 'bim.open_upstream'
+    bl_label = 'Open Upstream Reference'
+    page: bpy.props.StringProperty()
+
+    def execute(self, context):
+        if self.page == 'home':
+            webbrowser.open('https://blenderbim.org/')
+        elif self.page == 'docs':
+            webbrowser.open('https://blenderbim.org/docs/')
+        elif self.page == 'wiki':
+            webbrowser.open('https://wiki.osarch.org/')
+        elif self.page == 'community':
+            webbrowser.open('https://community.osarch.org/')
+        return {'FINISHED'}
+
+
+class Uninstall(bpy.types.Operator):
+    bl_idname = 'bim.uninstall'
+    bl_label = 'Uninstall BlenderBIM'
+
+    def execute(self, context):
+        import shutil
+        import glob
+
+        cwd = os.path.dirname(os.path.realpath(__file__))
+        addon_dir = os.path.join(cwd, '..')
+        files = ['ifcdiff.py', 'ordered_set.py', 'pyparsing.py', 'six.py']
+        directories = ['OCC', 'bcfplugin', 'dateutil', 'deepdiff',
+                'elementpath', 'ifcopenshell', 'jsonpickle', 'lib', 'pystache',
+                'pytz', 'svgwrite', 'xmlschema']
+
+        for f in files:
+            path = os.path.join(addon_dir, f)
+            if os.path.isfile(path):
+                os.remove(path)
+
+        lib_dir = os.path.join(cwd, '..', 'lib')
+        lib_files = glob.glob(os.path.join(lib_dir, '..', '..', '..', 'lib*.so*'))
+
+        for lib_file in lib_files:
+            try:
+                os.remove(lib_file)
+            except:
+                print('Error while deleting file: ', lib_file)
+        shutil.rmtree(os.path.join(lib_dir, '..', '..', '..', 'oce-0.17'), ignore_errors=True)
+
+        for directory in directories:
+            path = os.path.join(addon_dir, directory)
+            shutil.rmtree(path, ignore_errors=True)
+
+        bpy.ops.preferences.addon_remove(module='blenderbim')
         return {'FINISHED'}

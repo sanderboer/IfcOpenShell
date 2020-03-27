@@ -6,8 +6,7 @@ bl_info = {
     "blender": (2, 80, 0),
     "version": (0, 0, 999999),
     "location": "File > Export, File > Import, Scene / Object / Material / Mesh Properties",
-    "tracker_url": "https://sourceforge.net/p/ifcopenshell/"
-        "_list/tickets?source=navbar",
+    "tracker_url": "https://github.com/IfcOpenShell/IfcOpenShell/issues",
     "category": "Import-Export"
     }
 
@@ -34,6 +33,14 @@ if bpy is not None:
         operator.AssignClass,
         operator.SelectClass,
         operator.SelectType,
+        operator.SelectBcfFile,
+        operator.GetBcfTopics,
+        operator.ViewBcfTopic,
+        operator.ActivateBcfViewpoint,
+        operator.OpenBcfReferenceLink,
+        operator.OpenBcfBimSnippetSchema,
+        operator.OpenBcfBimSnippetReference,
+        operator.OpenBcfDocumentReference,
         operator.SelectFeaturesDir,
         operator.SelectDiffJsonFile,
         operator.SelectDiffNewFile,
@@ -66,6 +73,8 @@ if bpy is not None:
         operator.RemovePset,
         operator.AddOverridePset,
         operator.RemoveOverridePset,
+        operator.AddQto,
+        operator.RemoveQto,
         operator.AddMaterialPset,
         operator.RemoveMaterialPset,
         operator.AddDocument,
@@ -92,22 +101,35 @@ if bpy is not None:
         operator.AddSubcontext,
         operator.RemoveSubcontext,
         operator.CutSection,
+        operator.CreateSheet,
+        operator.OpenSheet,
+        operator.OpenCompiledSheet,
+        operator.AddViewToSheet,
         operator.CreateSheets,
         operator.GenerateDigitalTwin,
         operator.CreateView,
+        operator.OpenView,
         operator.ActivateView,
         operator.ExecuteIfcDiff,
         operator.AssignContext,
         operator.SetViewPreset1,
+        operator.OpenUpstream,
+        operator.Uninstall,
+        prop.BcfTopic,
+        prop.BcfTopicLabel,
+        prop.BcfTopicLink,
+        prop.BcfTopicDocumentReference,
+        prop.BcfTopicRelatedTopic,
         prop.Subcontext,
         prop.BIMProperties,
+        prop.BCFProperties,
         prop.DocProperties,
         prop.BIMLibrary,
         prop.MapConversion,
         prop.TargetCRS,
         prop.Attribute,
         prop.BoundaryCondition,
-        prop.Pset,
+        prop.PsetQto,
         prop.Document,
         prop.Classification,
         prop.GlobalId,
@@ -119,6 +141,7 @@ if bpy is not None:
         ui.BIM_PT_documentation,
         ui.BIM_PT_bim,
         ui.BIM_PT_search,
+        ui.BIM_PT_bcf,
         ui.BIM_PT_owner,
         ui.BIM_PT_context,
         ui.BIM_PT_qa,
@@ -130,6 +153,8 @@ if bpy is not None:
         ui.BIM_PT_mesh,
         ui.BIM_PT_object,
         ui.BIM_PT_camera,
+        ui.BIM_UL_topics,
+        ui.BIM_ADDON_preferences,
         )
 
     def menu_func_export(self, context):
@@ -152,6 +177,7 @@ if bpy is not None:
         bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
         bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
         bpy.types.Scene.BIMProperties = bpy.props.PointerProperty(type=prop.BIMProperties)
+        bpy.types.Scene.BCFProperties = bpy.props.PointerProperty(type=prop.BCFProperties)
         bpy.types.Scene.DocProperties = bpy.props.PointerProperty(type=prop.DocProperties)
         bpy.types.Scene.BIMLibrary = bpy.props.PointerProperty(type=prop.BIMLibrary)
         bpy.types.Scene.MapConversion = bpy.props.PointerProperty(type=prop.MapConversion)
@@ -169,6 +195,7 @@ if bpy is not None:
         bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
         bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
         del(bpy.types.Scene.BIMProperties)
+        del(bpy.types.Scene.BCFProperties)
         del(bpy.types.Scene.DocProperties)
         del(bpy.types.Scene.MapConversion)
         del(bpy.types.Scene.TargetCRS)
@@ -176,7 +203,7 @@ if bpy is not None:
         del(bpy.types.Collection.BIMObjectProperties)
         del(bpy.types.Material.BIMMaterialProperties)
         del(bpy.types.Mesh.BIMMeshProperties)
-        del(bpy.types.Mesh.BIMCameraProperties)
+        del(bpy.types.Camera.BIMCameraProperties)
 
     if __name__ == "__main__":
         register()

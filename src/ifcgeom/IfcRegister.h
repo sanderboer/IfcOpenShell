@@ -121,6 +121,10 @@ FACE(IfcDerivedProfileDef);
 // IfcAdvancedFace included in case of IFC4
 FACE(IfcFace);
 
+#ifdef SCHEMA_HAS_IfcCraneRailAShapeProfileDef
+FACE(IfcCraneRailAShapeProfileDef);
+#endif
+
 WIRE(IfcEdgeCurve);
 WIRE(IfcSubedge);
 WIRE(IfcOrientedEdge);
@@ -141,6 +145,9 @@ CURVE(IfcLine);
 #ifdef SCHEMA_HAS_IfcBSplineCurveWithKnots
 // IfcRationalBSplineCurveWithKnots included
 CURVE(IfcBSplineCurveWithKnots);
+#endif
+#ifdef SCHEMA_HAS_IfcSurfaceCurve
+CURVE(IfcSurfaceCurve);
 #endif
 
 CLASS(IfcCartesianPoint,gp_Pnt);

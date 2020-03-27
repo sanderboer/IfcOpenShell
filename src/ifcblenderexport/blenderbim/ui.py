@@ -38,7 +38,9 @@ class BIM_PT_object(Panel):
         row.prop(props, 'attributes')
 
         row = layout.row()
-        row.prop(props, 'type_product')
+        row.prop(props, 'relating_type')
+        row = layout.row()
+        row.prop(props, 'relating_structure')
 
         layout.label(text="Property Sets:")
         row = layout.row()
@@ -66,6 +68,21 @@ class BIM_PT_object(Panel):
             row.prop(pset, 'name', text='')
             row.operator('bim.remove_override_pset', icon='X', text='').pset_index = index
             for prop in pset.properties:
+                row = layout.row(align=True)
+                row.prop(prop, 'name', text='')
+                row.prop(prop, 'string_value', text='')
+
+        layout.label(text="Quantities:")
+
+        row = layout.row(align=True)
+        row.prop(props, 'qto_name', text='')
+        row.operator('bim.add_qto')
+
+        for index, qto in enumerate(props.qtos):
+            row = layout.row(align=True)
+            row.prop(qto, 'name', text='')
+            row.operator('bim.remove_qto', icon='X', text='').index = index
+            for prop in qto.properties:
                 row = layout.row(align=True)
                 row.prop(prop, 'name', text='')
                 row.prop(prop, 'string_value', text='')
@@ -282,15 +299,28 @@ class BIM_PT_documentation(Panel):
         props = bpy.context.scene.DocProperties
 
         row = layout.row()
+        row.operator('bim.set_view_preset_1')
+
+        row = layout.row()
         row.prop(props, 'view_name')
         row.operator('bim.create_view', icon='ADD', text='')
 
         row = layout.row()
+        row.prop(props, 'sheet_name')
+        row.operator('bim.create_sheet', icon='ADD', text='')
+
+        row = layout.row()
         row.prop(props, 'available_views')
+        row.operator('bim.open_view', icon='URL', text='')
         row.operator('bim.activate_view', icon='SCENE', text='')
 
         row = layout.row()
-        row.operator('bim.set_view_preset_1')
+        row.prop(props, 'available_sheets')
+        row.operator('bim.open_sheet', icon='URL', text='')
+        row.operator('bim.open_compiled_sheet', icon='OUTPUT', text='')
+
+        row = layout.row()
+        row.operator('bim.add_view_to_sheet')
 
         row = layout.row()
         row.operator('bim.create_sheets')
@@ -320,6 +350,9 @@ class BIM_PT_camera(Panel):
 
         row = layout.row()
         row.prop(dprops, 'should_recut')
+
+        row = layout.row()
+        row.prop(props, 'is_nts')
 
         row = layout.row(align=True)
         row.prop(props, 'diagram_scale', text='')
@@ -505,6 +538,103 @@ class BIM_PT_search(Panel):
         row.operator('bim.colour_by_pset', text='', icon='BRUSH_DATA')
 
 
+class BIM_PT_bcf(Panel):
+    bl_label = "BIM Collaboration Format"
+    bl_idname = "BIM_PT_bcf"
+    bl_options = {'DEFAULT_CLOSED'}
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "scene"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+
+        scene = context.scene
+        props = bpy.context.scene.BCFProperties
+
+        row = layout.row(align=True)
+        row.prop(props, "bcf_file")
+        row.operator("bim.select_bcf_file", icon="FILE_FOLDER", text="")
+
+        row = layout.row()
+        row.operator("bim.get_bcf_topics")
+
+        props = bpy.context.scene.BCFProperties
+        layout.template_list('BIM_UL_topics', '', props, 'topics', props, 'active_topic_index')
+
+        row = layout.row()
+        row.prop(props, 'topic_description', text='')
+
+        row = layout.row()
+        row.prop(props, 'viewpoints')
+        row.operator('bim.activate_bcf_viewpoint', icon='SCENE', text='')
+
+        row = layout.row()
+        row.prop(props, 'topic_type', text='Type')
+        row = layout.row()
+        row.prop(props, 'topic_status', text='Status')
+        row = layout.row()
+        row.prop(props, 'topic_priority', text='Priority')
+        row = layout.row()
+        row.prop(props, 'topic_stage', text='Stage')
+        row = layout.row()
+        row.prop(props, 'topic_creation_date', text='Date')
+        row = layout.row()
+        row.prop(props, 'topic_creation_author', text='Author')
+        row = layout.row()
+        row.prop(props, 'topic_modified_date', text='Modified On')
+        row = layout.row()
+        row.prop(props, 'topic_modified_author', text='Modified By')
+        row = layout.row()
+        row.prop(props, 'topic_assigned_to', text='Assigned To')
+        row = layout.row()
+        row.prop(props, 'topic_due_date', text='Due Date')
+
+        layout.label(text="Reference Links:")
+        for index, label in enumerate(props.topic_links):
+            row = layout.row()
+            row.prop(label, 'name', text='Link {}'.format(index + 1))
+            row.operator('bim.open_bcf_reference_link', icon='URL', text='').index = index
+
+        layout.label(text="Labels:")
+        for index, label in enumerate(props.topic_labels):
+            row = layout.row(align=True)
+            row.prop(label, 'name', text='')
+
+        layout.label(text="BIM Snippet:")
+        if props.topic_has_snippet:
+            row = layout.row(align=True)
+            row.prop(props, 'topic_snippet_type')
+            if props.topic_snippet_schema:
+                row.operator('bim.open_bcf_bim_snippet_schema', icon='URL', text='')
+
+            row = layout.row(align=True)
+            row.prop(props, 'topic_snippet_reference')
+            if props.topic_snippet_is_external:
+                row.operator('bim.open_bcf_bim_snippet_reference', icon='URL', text='')
+            else:
+                row.operator('bim.open_bcf_bim_snippet_reference', icon='FILE_FOLDER', text='').topic_guid = props.topic_guid
+
+        layout.label(text="Document References:")
+        for index, doc in enumerate(props.topic_document_references):
+            row = layout.row(align=True)
+            row.prop(doc, 'description', text=f'File {index+1} Description:')
+            row = layout.row(align=True)
+            row.prop(doc, 'name', text=f'File {index+1} URI')
+            if doc.is_external:
+                row.operator('bim.open_bcf_document_reference', icon='URL', text='').data = '{}/{}'.format(
+                        props.topic_guid, index)
+            else:
+                row.operator('bim.open_bcf_document_reference', icon='FILE_FOLDER', text='').data = '{}/{}'.format(
+                        props.topic_guid, index)
+
+        layout.label(text="Related Topics:")
+        for topic in props.topic_related_topics:
+            row = layout.row(align=True)
+            row.operator('bim.view_bcf_topic', text=topic.name).topic_guid = topic.guid
+
+
 class BIM_PT_qa(Panel):
     bl_label = "BIMTester Quality Auditing"
     bl_idname = "BIM_PT_qa"
@@ -643,6 +773,17 @@ class BIM_PT_mvd(Panel):
         row = layout.row()
         row.prop(bim_properties, 'import_should_use_cpu_multiprocessing')
 
+        layout.label(text='Simplifications:')
+
+        row = layout.row()
+        row.prop(bim_properties, 'import_should_import_aggregates')
+        row = layout.row()
+        row.prop(bim_properties, 'import_should_merge_by_class')
+        row = layout.row()
+        row.prop(bim_properties, 'import_should_merge_by_material')
+        row = layout.row()
+        row.prop(bim_properties, 'import_should_clean_mesh')
+
         layout.label(text='Vendor Workarounds:')
 
         row = layout.row()
@@ -670,3 +811,27 @@ class BIM_PT_mvd(Panel):
         row.prop(bim_properties, 'import_should_ignore_building_coordinates')
         row = layout.row()
         row.prop(bim_properties, 'import_should_treat_styled_item_as_material')
+
+
+class BIM_UL_topics(bpy.types.UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
+        ob = data
+        if item:
+            layout.prop(item, 'name', text='', emboss=False)
+        else:
+            layout.label(text="", translate=False)
+
+
+class BIM_ADDON_preferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row()
+        row.operator('bim.open_upstream', text='Visit Homepage').page = 'home'
+        row.operator('bim.open_upstream', text='Visit Documentation').page = 'docs'
+        row = layout.row()
+        row.operator('bim.open_upstream', text='Visit Wiki').page = 'wiki'
+        row.operator('bim.open_upstream', text='Visit Community').page = 'community'
+        row = layout.row()
+        row.operator('bim.uninstall')
